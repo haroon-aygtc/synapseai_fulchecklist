@@ -1,232 +1,226 @@
-"use client";
+/**
+ * APIX Dashboard Page
+ * 
+ * Comprehensive dashboard for APIX system monitoring and management.
+ */
 
 import React, { useState } from 'react';
-import { v4 as uuidv4 } from 'uuid';
-import { ApixEventStream, ApixEventPublisher } from '@/components/apix';
-import { useApixConnection, useApixRoom, EventChannel } from '@/lib/apix';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
-import { Loader2, RefreshCw, Wifi, WifiOff } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { 
+  ApixStatus,
+  ApixEventStream,
+  ApixEventPublisher,
+  ApixChannelMonitor,
+  ApixEventPlayback,
+  ApixEventFilter,
+  ApixConnectionManager
+} from '@/components/apix';
+import { ApixProvider } from '@/lib/apix/context';
+import { useApixEvents, APIX_CHANNELS } from '@/lib/apix';
+import { 
+  Activity, 
+  Monitor, 
+  Settings, 
+  Filter,
+  Play,
+  Send,
+  BarChart3,
+  Zap
+} from 'lucide-react';
 
-export default function ApixDebugPage() {
-  const { status, connect, disconnect, isConnected } = useApixConnection(true);
-  const [sessionId, setSessionId] = useState<string>(uuidv4());
-  const [roomId, setRoomId] = useState<string>('');
-  const [activeRoom, setActiveRoom] = useState<string | null>(null);
-  const [selectedChannels, setSelectedChannels] = useState<EventChannel[]>([]);
-  const { roomId: connectedRoomId } = useApixRoom(activeRoom);
-
-  // Available channels
-  const channels: EventChannel[] = [
-    'agent-events',
-    'tool-events',
-    'workflow-events',
-    'provider-events',
-    'system-events'
-  ];
-
-  // Toggle channel selection
-  const toggleChannel = (channel: EventChannel) => {
-    setSelectedChannels(prev => 
-      prev.includes(channel)
-        ? prev.filter(c => c !== channel)
-        : [...prev, channel]
-    );
-  };
-
-  // Generate new session ID
-  const generateNewSessionId = () => {
-    setSessionId(uuidv4());
-  };
-
-  // Join room
-  const joinRoom = () => {
-    if (roomId) {
-      setActiveRoom(roomId);
-    }
-  };
-
-  // Leave room
-  const leaveRoom = () => {
-    setActiveRoom(null);
-  };
+export default function ApixDashboard() {
+  const [filteredEvents, setFilteredEvents] = useState<any[]>([]);
+  
+  // Get all events for filtering
+  const allEvents = [
+    ...useApixEvents({ channel: APIX_CHANNELS.AGENT_EVENTS, includeHistory: true, historyLimit: 50 }),
+    ...useApixEvents({ channel: APIX_CHANNELS.TOOL_EVENTS, includeHistory: true, historyLimit: 50 }),
+    ...useApixEvents({ channel: APIX_CHANNELS.WORKFLOW_EVENTS, includeHistory: true, historyLimit: 50 }),
+    ...useApixEvents({ channel: APIX_CHANNELS.PROVIDER_EVENTS, includeHistory: true, historyLimit: 50 }),
+    ...useApixEvents({ channel: APIX_CHANNELS.SYSTEM_EVENTS, includeHistory: true, historyLimit: 50 }),
+    ...useApixEvents({ channel: APIX_CHANNELS.USER_EVENTS, includeHistory: true, historyLimit: 50 }),
+    ...useApixEvents({ channel: APIX_CHANNELS.ORGANIZATION_EVENTS, includeHistory: true, historyLimit: 50 }),
+    ...useApixEvents({ channel: APIX_CHANNELS.STREAMING, includeHistory: true, historyLimit: 50 }),
+    ...useApixEvents({ channel: APIX_CHANNELS.CUSTOM, includeHistory: true, historyLimit: 50 })
+  ].sort((a, b) => b.metadata.timestamp.getTime() - a.metadata.timestamp.getTime());
 
   return (
-    <div className="container py-8 space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">APIX Debug Console</h1>
-          <p className="text-muted-foreground">
-            Monitor and interact with the real-time event system
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant={isConnected ? "outline" : "default"}
-            onClick={isConnected ? disconnect : connect}
-            className="gap-2"
-          >
-            {status === 'connecting' || status === 'reconnecting' ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : isConnected ? (
-              <WifiOff className="h-4 w-4" />
-            ) : (
-              <Wifi className="h-4 w-4" />
-            )}
-            {isConnected ? 'Disconnect' : 'Connect'}
-          </Button>
-        </div>
-      </div>
+    <ApixProvider autoConnect={false}>
+      <div className="min-h-screen bg-gray-50 p-6">
+        <div className="max-w-7xl mx-auto space-y-6">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">APIX Dashboard</h1>
+              <p className="text-gray-600 mt-1">
+                Real-time monitoring and management for the APIX protocol system
+              </p>
+            </div>
+            <Badge variant="outline" className="text-lg px-4 py-2">
+              <Activity className="h-4 w-4 mr-2" />
+              SynapseAI APIX
+            </Badge>
+          </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle>Event Stream</CardTitle>
-            <CardDescription>
-              Real-time events from the APIX protocol
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                {channels.map(channel => (
-                  <Button
-                    key={channel}
-                    variant={selectedChannels.includes(channel) ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => toggleChannel(channel)}
-                    className="text-xs"
-                  >
-                    {channel}
-                  </Button>
-                ))}
+          {/* Main Dashboard Tabs */}
+          <Tabs defaultValue="overview" className="space-y-6">
+            <TabsList className="grid w-full grid-cols-7">
+              <TabsTrigger value="overview" className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Overview
+              </TabsTrigger>
+              <TabsTrigger value="connection" className="flex items-center gap-2">
+                <Settings className="h-4 w-4" />
+                Connection
+              </TabsTrigger>
+              <TabsTrigger value="channels" className="flex items-center gap-2">
+                <Monitor className="h-4 w-4" />
+                Channels
+              </TabsTrigger>
+              <TabsTrigger value="events" className="flex items-center gap-2">
+                <Activity className="h-4 w-4" />
+                Events
+              </TabsTrigger>
+              <TabsTrigger value="filter" className="flex items-center gap-2">
+                <Filter className="h-4 w-4" />
+                Filter
+              </TabsTrigger>
+              <TabsTrigger value="playback" className="flex items-center gap-2">
+                <Play className="h-4 w-4" />
+                Playback
+              </TabsTrigger>
+              <TabsTrigger value="publisher" className="flex items-center gap-2">
+                <Send className="h-4 w-4" />
+                Publisher
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Overview Tab */}
+            <TabsContent value="overview" className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <ApixStatus showDetailedMetrics={true} />
+                <ApixConnectionManager showAdvancedSettings={false} />
               </div>
               
-              <ApixEventStream
-                channels={selectedChannels.length > 0 ? selectedChannels : undefined}
-                sessionId={sessionId}
-                height="500px"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Session Control</CardTitle>
-              <CardDescription>
-                Manage your event session
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="sessionId">Session ID</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="sessionId"
-                    value={sessionId}
-                    onChange={(e) => setSessionId(e.target.value)}
-                    className="font-mono text-sm"
-                  />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={generateNewSessionId}
-                    title="Generate new session ID"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                  </Button>
-                </div>
+              <div className="grid grid-cols-1 gap-6">
+                <ApixChannelMonitor />
               </div>
-
-              <Separator />
-
-              <div className="space-y-2">
-                <Label htmlFor="roomId">Room ID</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="roomId"
-                    value={roomId}
-                    onChange={(e) => setRoomId(e.target.value)}
-                    placeholder="Enter room ID"
-                    className="font-mono text-sm"
-                  />
-                </div>
-                <div className="flex gap-2 pt-2">
-                  <Button
-                    onClick={joinRoom}
-                    disabled={!roomId || activeRoom === roomId}
-                    className="w-full"
-                    size="sm"
-                  >
-                    Join Room
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={leaveRoom}
-                    disabled={!activeRoom}
-                    className="w-full"
-                    size="sm"
-                  >
-                    Leave Room
-                  </Button>
-                </div>
-                {activeRoom && (
-                  <p className="text-xs text-muted-foreground pt-1">
-                    Connected to room: <span className="font-mono">{activeRoom}</span>
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Tabs defaultValue="publish">
-            <TabsList className="grid grid-cols-2 w-full">
-              <TabsTrigger value="publish">Publish</TabsTrigger>
-              <TabsTrigger value="templates">Templates</TabsTrigger>
-            </TabsList>
-            <TabsContent value="publish" className="pt-4">
-              <ApixEventPublisher
-                sessionId={sessionId}
-              />
             </TabsContent>
-            <TabsContent value="templates" className="pt-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Event Templates</CardTitle>
-                  <CardDescription>
-                    Common event patterns
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 gap-2">
-                    <Button variant="outline" className="justify-start">
-                      Tool Call Sequence
-                    </Button>
-                    <Button variant="outline" className="justify-start">
-                      Agent Thinking
-                    </Button>
-                    <Button variant="outline" className="justify-start">
-                      Workflow State Change
-                    </Button>
-                    <Button variant="outline" className="justify-start">
-                      Provider Fallback
-                    </Button>
-                    <Button variant="outline" className="justify-start">
-                      Session Start/End
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+
+            {/* Connection Tab */}
+            <TabsContent value="connection" className="space-y-6">
+              <ApixConnectionManager showAdvancedSettings={true} />
+            </TabsContent>
+
+            {/* Channels Tab */}
+            <TabsContent value="channels" className="space-y-6">
+              <ApixChannelMonitor />
+            </TabsContent>
+
+            {/* Events Tab */}
+            <TabsContent value="events" className="space-y-6">
+              <ApixEventStream maxEvents={200} />
+            </TabsContent>
+
+            {/* Filter Tab */}
+            <TabsContent value="filter" className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2">
+                  <ApixEventFilter
+                    events={allEvents}
+                    onFilteredEvents={setFilteredEvents}
+                    showPreview={true}
+                  />
+                </div>
+                <div>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Filter Results</CardTitle>
+                      <CardDescription>
+                        Events matching your current filters
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium">Total Events:</span>
+                          <Badge variant="secondary">{allEvents.length}</Badge>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium">Filtered Events:</span>
+                          <Badge variant="default">{filteredEvents.length}</Badge>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium">Filter Efficiency:</span>
+                          <Badge variant="outline">
+                            {allEvents.length > 0 
+                              ? ((filteredEvents.length / allEvents.length) * 100).toFixed(1)
+                              : 0
+                            }%
+                          </Badge>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* Playback Tab */}
+            <TabsContent value="playback" className="space-y-6">
+              <ApixEventPlayback maxRecordingDuration={600000} />
+            </TabsContent>
+
+            {/* Publisher Tab */}
+            <TabsContent value="publisher" className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <ApixEventPublisher />
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Publishing Guidelines</CardTitle>
+                    <CardDescription>
+                      Best practices for publishing APIX events
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <h4 className="font-semibold text-sm">Event Types</h4>
+                      <ul className="text-sm text-gray-600 space-y-1">
+                        <li>• Use descriptive event types (e.g., AGENT_MESSAGE_SENT)</li>
+                        <li>• Follow the existing naming conventions</li>
+                        <li>• Include relevant metadata for debugging</li>
+                      </ul>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <h4 className="font-semibold text-sm">Channels</h4>
+                      <ul className="text-sm text-gray-600 space-y-1">
+                        <li>• Agent events: agent-events channel</li>
+                        <li>• Tool executions: tool-events channel</li>
+                        <li>• Workflow updates: workflow-events channel</li>
+                        <li>• System notifications: system-events channel</li>
+                      </ul>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <h4 className="font-semibold text-sm">Priority Levels</h4>
+                      <ul className="text-sm text-gray-600 space-y-1">
+                        <li>• Critical: System failures, security issues</li>
+                        <li>• High: Important state changes</li>
+                        <li>• Normal: Regular operations (default)</li>
+                        <li>• Low: Debug information, metrics</li>
+                      </ul>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
             </TabsContent>
           </Tabs>
         </div>
       </div>
-    </div>
+    </ApixProvider>
   );
 }
