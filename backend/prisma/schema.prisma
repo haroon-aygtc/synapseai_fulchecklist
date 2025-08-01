@@ -1,0 +1,417 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Authentication & Authorization
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  firstName         String
+  lastName          String
+  avatar            String?
+  passwordHash      String
+  role              UserRole  @default(DEVELOPER)
+  organizationId    String
+  permissions       Permission[]
+  isActive          Boolean   @default(true)
+  lastLoginAt       DateTime?
+  twoFactorEnabled  Boolean   @default(false)
+  twoFactorSecret   String?
+  backupCodes       String[]
+  emailVerified     Boolean   @default(false)
+  emailVerificationToken String?
+  passwordResetToken String?
+  passwordResetExpires DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiKeys           ApiKey[]
+  sessions          Session[]
+  agents            Agent[]
+  tools             Tool[]
+  workflows         Workflow[]
+  workflowExecutions WorkflowExecution[]
+  auditLogs         AuditLog[]
+
+  @@map("users")
+}
+
+model Organization {
+  id                String    @id @default(cuid())
+  name              String
+  slug              String    @unique
+  domain            String?
+  logo              String?
+  primaryColor      String    @default("#3b82f6")
+  secondaryColor    String    @default("#1e40af")
+  customBranding    Json      @default("{}")
+  settings          Json      @default("{}")
+  subscriptionId    String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  users             User[]
+  agents            Agent[]
+  tools             Tool[]
+  workflows         Workflow[]
+  workflowExecutions WorkflowExecution[]
+  apiKeys           ApiKey[]
+  auditLogs         AuditLog[]
+  subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@map("organizations")
+}
+
+model Subscription {
+  id                String    @id @default(cuid())
+  plan              SubscriptionPlan @default(FREE)
+  status            SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime
+  currentPeriodEnd  DateTime
+  cancelAtPeriodEnd Boolean   @default(false)
+  stripeSubscriptionId String?
+  usage             Json      @default("{}")
+  limits            Json      @default("{}")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organizations     Organization[]
+
+  @@map("subscriptions")
+}
+
+model ApiKey {
+  id             String    @id @default(cuid())
+  name           String
+  keyHash        String    @unique
+  userId         String
+  organizationId String
+  permissions    Permission[]
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  userId         String
+  organizationId String
+  token          String    @unique
+  refreshToken   String    @unique
+  expiresAt      DateTime
+  ipAddress      String
+  userAgent      String
+  isActive       Boolean   @default(true)
+  lastActivityAt DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model AuditLog {
+  id             String    @id @default(cuid())
+  userId         String?
+  organizationId String
+  action         String
+  resource       String
+  resourceId     String?
+  details        Json      @default("{}")
+  ipAddress      String
+  userAgent      String
+  timestamp      DateTime  @default(now())
+
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("audit_logs")
+}
+
+// Agent System
+model Agent {
+  id             String    @id @default(cuid())
+  name           String
+  description    String?
+  type           AgentType @default(STANDALONE)
+  config         Json      @default("{}")
+  systemPrompt   String?
+  model          String    @default("gpt-4")
+  temperature    Float     @default(0.7)
+  maxTokens      Int       @default(2048)
+  tools          String[]  @default([])
+  skills         Json      @default("[]")
+  memory         Json      @default("{}")
+  isActive       Boolean   @default(true)
+  version        Int       @default(1)
+  userId         String
+  organizationId String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sessions       AgentSession[]
+  workflowNodes  WorkflowNode[]
+
+  @@map("agents")
+}
+
+model AgentSession {
+  id             String    @id @default(cuid())
+  agentId        String
+  sessionId      String    @unique
+  context        Json      @default("{}")
+  memory         Json      @default("{}")
+  messages       Json      @default("[]")
+  status         SessionStatus @default(ACTIVE)
+  startedAt      DateTime  @default(now())
+  endedAt        DateTime?
+  lastActivityAt DateTime  @default(now())
+
+  agent          Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@map("agent_sessions")
+}
+
+// Tool System
+model Tool {
+  id             String    @id @default(cuid())
+  name           String
+  description    String?
+  type           ToolType
+  config         Json      @default("{}")
+  inputSchema    Json      @default("{}")
+  outputSchema   Json      @default("{}")
+  code           String?
+  endpoint       String?
+  authentication Json      @default("{}")
+  metadata       Json      @default("{}")
+  isActive       Boolean   @default(true)
+  version        Int       @default(1)
+  category       String?
+  tags           String[]  @default([])
+  userId         String
+  organizationId String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  executions     ToolExecution[]
+  workflowNodes  WorkflowNode[]
+
+  @@map("tools")
+}
+
+model ToolExecution {
+  id             String    @id @default(cuid())
+  toolId         String
+  input          Json
+  output         Json?
+  status         ExecutionStatus @default(PENDING)
+  error          String?
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+  duration       Int?
+  metadata       Json      @default("{}")
+
+  tool           Tool @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
+  @@map("tool_executions")
+}
+
+// Workflow System
+model Workflow {
+  id             String    @id @default(cuid())
+  name           String
+  description    String?
+  config         Json      @default("{}")
+  nodes          Json      @default("[]")
+  edges          Json      @default("[]")
+  triggers       Json      @default("[]")
+  variables      Json      @default("{}")
+  settings       Json      @default("{}")
+  isActive       Boolean   @default(true)
+  version        Int       @default(1)
+  userId         String
+  organizationId String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  nodes          WorkflowNode[]
+  executions     WorkflowExecution[]
+
+  @@map("workflows")
+}
+
+model WorkflowNode {
+  id             String    @id @default(cuid())
+  workflowId     String
+  nodeId         String
+  type           NodeType
+  name           String
+  config         Json      @default("{}")
+  position       Json      @default("{}")
+  agentId        String?
+  toolId         String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  workflow       Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  agent          Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  tool           Tool?    @relation(fields: [toolId], references: [id], onDelete: SetNull)
+
+  @@unique([workflowId, nodeId])
+  @@map("workflow_nodes")
+}
+
+model WorkflowExecution {
+  id             String    @id @default(cuid())
+  workflowId     String
+  status         ExecutionStatus @default(PENDING)
+  input          Json      @default("{}")
+  output         Json?
+  context        Json      @default("{}")
+  currentNodeId  String?
+  error          String?
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+  duration       Int?
+  userId         String
+  organizationId String
+
+  workflow       Workflow     @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  steps          WorkflowExecutionStep[]
+
+  @@map("workflow_executions")
+}
+
+model WorkflowExecutionStep {
+  id             String    @id @default(cuid())
+  executionId    String
+  nodeId         String
+  status         ExecutionStatus @default(PENDING)
+  input          Json      @default("{}")
+  output         Json?
+  error          String?
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+  duration       Int?
+  retryCount     Int       @default(0)
+  metadata       Json      @default("{}")
+
+  execution      WorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@map("workflow_execution_steps")
+}
+
+// Enums
+enum UserRole {
+  SUPER_ADMIN
+  ORG_ADMIN
+  DEVELOPER
+  VIEWER
+}
+
+enum Permission {
+  AGENT_CREATE
+  AGENT_READ
+  AGENT_UPDATE
+  AGENT_DELETE
+  AGENT_EXECUTE
+  TOOL_CREATE
+  TOOL_READ
+  TOOL_UPDATE
+  TOOL_DELETE
+  TOOL_EXECUTE
+  WORKFLOW_CREATE
+  WORKFLOW_READ
+  WORKFLOW_UPDATE
+  WORKFLOW_DELETE
+  WORKFLOW_EXECUTE
+  ORG_MANAGE
+  ORG_SETTINGS
+  ORG_BILLING
+  ORG_ANALYTICS
+  USER_MANAGE
+  USER_INVITE
+  USER_REMOVE
+  SYSTEM_ADMIN
+  AUDIT_READ
+}
+
+enum SubscriptionPlan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  UNPAID
+}
+
+enum AgentType {
+  STANDALONE
+  TOOL_DRIVEN
+  HYBRID
+  MULTI_TASK
+  MULTI_PROVIDER
+}
+
+enum ToolType {
+  FUNCTION_CALLER
+  REST_API
+  RAG_RETRIEVAL
+  BROWSER_AUTOMATION
+  DATABASE_QUERY
+  CUSTOM_LOGIC
+}
+
+enum NodeType {
+  AGENT
+  TOOL
+  HYBRID
+  CONDITION
+  LOOP
+  HUMAN_INPUT
+  WEBHOOK
+  SCHEDULE
+}
+
+enum ExecutionStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  PAUSED
+}
+
+enum SessionStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
