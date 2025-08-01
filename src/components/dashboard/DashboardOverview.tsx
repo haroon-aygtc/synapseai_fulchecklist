@@ -1,425 +1,456 @@
 "use client";
 
-import React from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
+import React from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Activity,
+  Bot,
+  Wrench,
+  Workflow,
+  TrendingUp,
+  TrendingDown,
+  Clock,
+  Zap,
   AlertCircle,
-  ArrowRight,
-  BarChart2,
-  Box,
-  CpuIcon,
-  Database,
-  LineChart,
-  MessageSquare,
-  Settings,
+  CheckCircle,
   Users,
-} from "lucide-react";
+  DollarSign,
+  BarChart3,
+  Plus,
+  ArrowUpRight,
+  Calendar,
+  Filter
+} from 'lucide-react';
 
-interface MetricCardProps {
-  title: string;
-  value: string | number;
-  description?: string;
-  trend?: {
-    value: number;
-    isPositive: boolean;
-  };
-  icon?: React.ReactNode;
+interface DashboardOverviewProps {
+  className?: string;
 }
 
-const MetricCard = (
-  { title, value, description, trend, icon }: MetricCardProps = {
-    title: "Metric",
-    value: "0",
-    icon: <Activity className="h-4 w-4" />,
+const metrics = [
+  {
+    title: 'Active Agents',
+    value: '12',
+    change: '+2',
+    changeType: 'positive' as const,
+    icon: Bot,
+    description: 'from last week'
   },
-) => {
+  {
+    title: 'Active Tools',
+    value: '24',
+    change: '+4',
+    changeType: 'positive' as const,
+    icon: Wrench,
+    description: 'from last week'
+  },
+  {
+    title: 'Running Workflows',
+    value: '7',
+    change: '+1',
+    changeType: 'positive' as const,
+    icon: Workflow,
+    description: 'from last week'
+  },
+  {
+    title: 'API Calls Today',
+    value: '1,324',
+    change: '+12%',
+    changeType: 'positive' as const,
+    icon: Activity,
+    description: 'from yesterday'
+  },
+  {
+    title: 'Response Time',
+    value: '142ms',
+    change: '-8ms',
+    changeType: 'positive' as const,
+    icon: Zap,
+    description: 'avg response'
+  },
+  {
+    title: 'Success Rate',
+    value: '99.2%',
+    change: '+0.3%',
+    changeType: 'positive' as const,
+    icon: CheckCircle,
+    description: 'last 24h'
+  },
+  {
+    title: 'Active Users',
+    value: '48',
+    change: '+6',
+    changeType: 'positive' as const,
+    icon: Users,
+    description: 'this month'
+  },
+  {
+    title: 'Cost Today',
+    value: '$23.45',
+    change: '-$2.10',
+    changeType: 'positive' as const,
+    icon: DollarSign,
+    description: 'vs yesterday'
+  }
+];
+
+const recentActivity = [
+  {
+    id: 1,
+    type: 'agent',
+    title: 'Customer Support Agent deployed',
+    description: 'Successfully deployed to production',
+    time: '2 minutes ago',
+    status: 'success',
+    icon: Bot
+  },
+  {
+    id: 2,
+    type: 'workflow',
+    title: 'Data Processing Workflow completed',
+    description: 'Processed 1,247 records in 3.2 seconds',
+    time: '5 minutes ago',
+    status: 'success',
+    icon: Workflow
+  },
+  {
+    id: 3,
+    type: 'tool',
+    title: 'Email Tool configuration updated',
+    description: 'SMTP settings modified',
+    time: '12 minutes ago',
+    status: 'info',
+    icon: Wrench
+  },
+  {
+    id: 4,
+    type: 'alert',
+    title: 'High API usage detected',
+    description: 'Approaching daily limit (85% used)',
+    time: '18 minutes ago',
+    status: 'warning',
+    icon: AlertCircle
+  },
+  {
+    id: 5,
+    type: 'agent',
+    title: 'Sales Assistant Agent created',
+    description: 'Ready for testing and deployment',
+    time: '25 minutes ago',
+    status: 'info',
+    icon: Bot
+  }
+];
+
+const quickActions = [
+  {
+    title: 'Create Agent',
+    description: 'Build a new AI agent from scratch or template',
+    icon: Bot,
+    href: '/agents/create',
+    color: 'bg-blue-500'
+  },
+  {
+    title: 'Add Tool',
+    description: 'Configure a new tool for your agents',
+    icon: Wrench,
+    href: '/tools/create',
+    color: 'bg-green-500'
+  },
+  {
+    title: 'Design Workflow',
+    description: 'Create a new orchestration workflow',
+    icon: Workflow,
+    href: '/workflows/create',
+    color: 'bg-purple-500'
+  },
+  {
+    title: 'View Analytics',
+    description: 'Analyze performance and usage metrics',
+    icon: BarChart3,
+    href: '/analytics',
+    color: 'bg-orange-500'
+  }
+];
+
+export default function DashboardOverview({ className }: DashboardOverviewProps) {
   return (
-    <Card className="bg-background">
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <div className="h-4 w-4 text-muted-foreground">{icon}</div>
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
-        {description && (
-          <p className="text-xs text-muted-foreground mt-1">{description}</p>
-        )}
-        {trend && (
-          <div className="flex items-center mt-2">
-            <span
-              className={`text-xs ${trend.isPositive ? "text-green-500" : "text-red-500"}`}
-            >
-              {trend.isPositive ? "+" : ""}
-              {trend.value}%
-            </span>
-            <span className="text-xs text-muted-foreground ml-1">
-              from last month
-            </span>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-};
-
-interface ActivityLogProps {
-  logs?: Array<{
-    id: string;
-    message: string;
-    timestamp: string;
-    type: "info" | "warning" | "error" | "success";
-  }>;
-}
-
-const ActivityLog = ({
-  logs = [
-    {
-      id: "1",
-      message: 'Agent "Customer Support" deployed successfully',
-      timestamp: "2023-06-15T10:30:00Z",
-      type: "success",
-    },
-    {
-      id: "2",
-      message: 'Workflow "Order Processing" execution completed',
-      timestamp: "2023-06-15T09:45:00Z",
-      type: "info",
-    },
-    {
-      id: "3",
-      message:
-        "OpenAI provider rate limit reached, fallback to Claude activated",
-      timestamp: "2023-06-15T09:30:00Z",
-      type: "warning",
-    },
-    {
-      id: "4",
-      message: 'Tool "Database Query" failed to execute',
-      timestamp: "2023-06-15T08:15:00Z",
-      type: "error",
-    },
-    {
-      id: "5",
-      message: 'New agent "Product Recommendation" created',
-      timestamp: "2023-06-14T16:20:00Z",
-      type: "info",
-    },
-  ],
-}: ActivityLogProps) => {
-  const getLogIcon = (type: string) => {
-    switch (type) {
-      case "warning":
-        return <AlertCircle className="h-4 w-4 text-yellow-500" />;
-      case "error":
-        return <AlertCircle className="h-4 w-4 text-red-500" />;
-      case "success":
-        return <Activity className="h-4 w-4 text-green-500" />;
-      default:
-        return <Activity className="h-4 w-4 text-blue-500" />;
-    }
-  };
-
-  const formatTimestamp = (timestamp: string) => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  };
-
-  return (
-    <Card className="bg-background">
-      <CardHeader>
-        <CardTitle className="text-lg">Recent Activity</CardTitle>
-        <CardDescription>System events and notifications</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {logs.map((log) => (
-          <div key={log.id} className="flex items-start space-x-3">
-            <div className="mt-0.5">{getLogIcon(log.type)}</div>
-            <div className="space-y-1">
-              <p className="text-sm">{log.message}</p>
-              <p className="text-xs text-muted-foreground">
-                {formatTimestamp(log.timestamp)}
-              </p>
-            </div>
-          </div>
-        ))}
-      </CardContent>
-      <CardFooter>
-        <Button variant="ghost" size="sm" className="w-full">
-          View all activity
-          <ArrowRight className="ml-2 h-4 w-4" />
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-};
-
-interface ResourceUsageProps {
-  resources?: Array<{
-    name: string;
-    used: number;
-    total: number;
-    unit: string;
-  }>;
-}
-
-const ResourceUsage = ({
-  resources = [
-    { name: "API Calls", used: 8750, total: 10000, unit: "calls" },
-    { name: "Storage", used: 4.2, total: 10, unit: "GB" },
-    { name: "Compute", used: 65, total: 100, unit: "hours" },
-  ],
-}: ResourceUsageProps) => {
-  return (
-    <Card className="bg-background">
-      <CardHeader>
-        <CardTitle className="text-lg">Resource Usage</CardTitle>
-        <CardDescription>Current billing period</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {resources.map((resource) => {
-          const percentage = Math.round((resource.used / resource.total) * 100);
-          return (
-            <div key={resource.name} className="space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{resource.name}</span>
-                <span className="text-sm text-muted-foreground">
-                  {resource.used} / {resource.total} {resource.unit}
-                </span>
-              </div>
-              <Progress value={percentage} />
-            </div>
-          );
-        })}
-      </CardContent>
-      <CardFooter>
-        <Button variant="ghost" size="sm" className="w-full">
-          View usage details
-          <ArrowRight className="ml-2 h-4 w-4" />
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-};
-
-interface QuickAccessCardProps {
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-  href: string;
-}
-
-const QuickAccessCard = ({
-  title,
-  description,
-  icon,
-  href = "#",
-}: QuickAccessCardProps) => {
-  return (
-    <Card className="bg-background hover:bg-accent/50 transition-colors cursor-pointer">
-      <CardHeader className="flex flex-row items-center gap-4">
-        <div className="p-2 bg-primary/10 rounded-md">{icon}</div>
-        <div>
-          <CardTitle className="text-base">{title}</CardTitle>
-          <CardDescription className="text-xs">{description}</CardDescription>
-        </div>
-      </CardHeader>
-      <CardFooter>
-        <Button variant="ghost" size="sm" className="w-full" asChild>
-          <a href={href}>
-            Access
-            <ArrowRight className="ml-2 h-4 w-4" />
-          </a>
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-};
-
-export default function DashboardOverview() {
-  return (
-    <div className="p-6 space-y-6 bg-background">
+    <div className={`space-y-6 p-6 bg-background ${className || ''}`}>
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
-            Welcome to SynapseAI platform overview.
+            Welcome back! Here's what's happening with your AI platform.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-xs">
-            Enterprise Plan
-          </Badge>
           <Button variant="outline" size="sm">
-            <Settings className="h-4 w-4 mr-2" />
-            Settings
+            <Calendar className="mr-2 h-4 w-4" />
+            Last 7 days
+          </Button>
+          <Button variant="outline" size="sm">
+            <Filter className="mr-2 h-4 w-4" />
+            Filter
+          </Button>
+          <Button size="sm">
+            <Plus className="mr-2 h-4 w-4" />
+            Create
           </Button>
         </div>
       </div>
 
+      {/* Metrics Grid */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {metrics.map((metric, index) => {
+          const Icon = metric.icon;
+          return (
+            <Card key={index} className="bg-card">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">
+                  {metric.title}
+                </CardTitle>
+                <Icon className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{metric.value}</div>
+                <div className="flex items-center text-xs text-muted-foreground">
+                  <span className={`flex items-center ${
+                    metric.changeType === 'positive' ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    {metric.changeType === 'positive' ? (
+                      <TrendingUp className="mr-1 h-3 w-3" />
+                    ) : (
+                      <TrendingDown className="mr-1 h-3 w-3" />
+                    )}
+                    {metric.change}
+                  </span>
+                  <span className="ml-1">{metric.description}</span>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Main Content Tabs */}
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="analytics">Analytics</TabsTrigger>
-          <TabsTrigger value="reports">Reports</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          <TabsTrigger value="activity">Recent Activity</TabsTrigger>
+          <TabsTrigger value="performance">Performance</TabsTrigger>
+          <TabsTrigger value="resources">Quick Actions</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <MetricCard
-              title="Total Agents"
-              value="24"
-              trend={{ value: 12, isPositive: true }}
-              icon={<Users className="h-4 w-4" />}
-            />
-            <MetricCard
-              title="Active Workflows"
-              value="18"
-              trend={{ value: 5, isPositive: true }}
-              icon={<LineChart className="h-4 w-4" />}
-            />
-            <MetricCard
-              title="API Calls Today"
-              value="1,284"
-              trend={{ value: 8, isPositive: true }}
-              icon={<BarChart2 className="h-4 w-4" />}
-            />
-            <MetricCard
-              title="Avg. Response Time"
-              value="1.2s"
-              trend={{ value: 3, isPositive: false }}
-              icon={<Activity className="h-4 w-4" />}
-            />
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-            <Card className="col-span-4 bg-background">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {/* System Health */}
+            <Card className="bg-card">
               <CardHeader>
-                <CardTitle className="text-lg">Performance Metrics</CardTitle>
-                <CardDescription>System performance over time</CardDescription>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="h-5 w-5" />
+                  System Health
+                </CardTitle>
+                <CardDescription>
+                  Overall platform performance status
+                </CardDescription>
               </CardHeader>
-              <CardContent className="h-[300px] flex items-center justify-center">
-                <div className="text-muted-foreground text-sm flex flex-col items-center">
-                  <BarChart2 className="h-16 w-16 mb-2 text-muted-foreground/50" />
-                  <p>Performance chart visualization</p>
-                  <p className="text-xs">Showing data for the last 30 days</p>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>API Response Time</span>
+                    <span className="text-green-600">Excellent</span>
+                  </div>
+                  <Progress value={92} className="h-2" />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>System Uptime</span>
+                    <span className="text-green-600">99.9%</span>
+                  </div>
+                  <Progress value={99.9} className="h-2" />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>Error Rate</span>
+                    <span className="text-green-600">0.1%</span>
+                  </div>
+                  <Progress value={0.1} className="h-2" />
                 </div>
               </CardContent>
             </Card>
 
-            <div className="col-span-3 grid gap-4 lg:grid-rows-2">
-              <ActivityLog />
-              <ResourceUsage />
-            </div>
-          </div>
+            {/* Resource Usage */}
+            <Card className="bg-card">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5" />
+                  Resource Usage
+                </CardTitle>
+                <CardDescription>
+                  Current resource allocation and consumption
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>CPU Usage</span>
+                    <span>34%</span>
+                  </div>
+                  <Progress value={34} className="h-2" />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>Memory Usage</span>
+                    <span>67%</span>
+                  </div>
+                  <Progress value={67} className="h-2" />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>Storage Used</span>
+                    <span>23%</span>
+                  </div>
+                  <Progress value={23} className="h-2" />
+                </div>
+              </CardContent>
+            </Card>
 
-          <div>
-            <h2 className="text-lg font-semibold mb-4">Quick Access</h2>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <QuickAccessCard
-                title="Agent Management"
-                description="Create and manage AI agents"
-                icon={<MessageSquare className="h-5 w-5 text-primary" />}
-                href="/agents"
-              />
-              <QuickAccessCard
-                title="Tool Management"
-                description="Configure and test tools"
-                icon={<Box className="h-5 w-5 text-primary" />}
-                href="/tools"
-              />
-              <QuickAccessCard
-                title="Workflow Builder"
-                description="Design AI orchestration workflows"
-                icon={<LineChart className="h-5 w-5 text-primary" />}
-                href="/workflows"
-              />
-              <QuickAccessCard
-                title="Provider Settings"
-                description="Configure AI providers and routing"
-                icon={<CpuIcon className="h-5 w-5 text-primary" />}
-                href="/providers"
-              />
-            </div>
+            {/* Top Performing Agents */}
+            <Card className="bg-card">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bot className="h-5 w-5" />
+                  Top Agents
+                </CardTitle>
+                <CardDescription>
+                  Best performing agents this week
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {[
+                    { name: 'Customer Support', calls: 1247, success: 98.5 },
+                    { name: 'Sales Assistant', calls: 892, success: 96.2 },
+                    { name: 'Data Processor', calls: 634, success: 99.1 },
+                    { name: 'Content Writer', calls: 423, success: 94.8 }
+                  ].map((agent, index) => (
+                    <div key={index} className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium">{agent.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {agent.calls} calls
+                        </p>
+                      </div>
+                      <Badge variant="secondary">
+                        {agent.success}%
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
 
-        <TabsContent value="analytics" className="space-y-4">
-          <Card className="bg-background">
+        <TabsContent value="activity" className="space-y-4">
+          <Card className="bg-card">
             <CardHeader>
-              <CardTitle className="text-lg">Analytics Dashboard</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5" />
+                Recent Activity
+              </CardTitle>
               <CardDescription>
-                Detailed performance analytics and insights
+                Latest events and updates across your platform
               </CardDescription>
-            </CardHeader>
-            <CardContent className="h-[400px] flex items-center justify-center">
-              <div className="text-muted-foreground text-sm flex flex-col items-center">
-                <BarChart2 className="h-16 w-16 mb-2 text-muted-foreground/50" />
-                <p>Analytics visualization</p>
-                <p className="text-xs">
-                  Select metrics and timeframes to analyze
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="reports" className="space-y-4">
-          <Card className="bg-background">
-            <CardHeader>
-              <CardTitle className="text-lg">Generated Reports</CardTitle>
-              <CardDescription>System and usage reports</CardDescription>
-            </CardHeader>
-            <CardContent className="h-[400px] flex items-center justify-center">
-              <div className="text-muted-foreground text-sm flex flex-col items-center">
-                <Database className="h-16 w-16 mb-2 text-muted-foreground/50" />
-                <p>Reports will be displayed here</p>
-                <p className="text-xs">
-                  Generate custom reports from the control panel
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="notifications" className="space-y-4">
-          <Card className="bg-background">
-            <CardHeader>
-              <CardTitle className="text-lg">System Notifications</CardTitle>
-              <CardDescription>Alerts and important messages</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="flex items-start space-x-3 pb-4">
-                    <div className="mt-0.5">
-                      <AlertCircle className="h-4 w-4 text-blue-500" />
+                {recentActivity.map((activity) => {
+                  const Icon = activity.icon;
+                  return (
+                    <div key={activity.id} className="flex items-start gap-4 p-3 rounded-lg border">
+                      <div className={`p-2 rounded-full ${
+                        activity.status === 'success' ? 'bg-green-100 text-green-600' :
+                        activity.status === 'warning' ? 'bg-yellow-100 text-yellow-600' :
+                        'bg-blue-100 text-blue-600'
+                      }`}>
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium">{activity.title}</p>
+                        <p className="text-xs text-muted-foreground">{activity.description}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{activity.time}</p>
+                      </div>
+                      <Button variant="ghost" size="sm">
+                        <ArrowUpRight className="h-4 w-4" />
+                      </Button>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-sm">System notification example {i}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Today at 10:30 AM
-                      </p>
-                    </div>
-                    <Separator />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="performance" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card className="bg-card">
+              <CardHeader>
+                <CardTitle>Performance Trends</CardTitle>
+                <CardDescription>
+                  System performance over the last 7 days
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="h-80">
+                <div className="h-full w-full rounded-md border border-dashed flex items-center justify-center">
+                  <p className="text-muted-foreground">Performance Chart Placeholder</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card">
+              <CardHeader>
+                <CardTitle>Usage Analytics</CardTitle>
+                <CardDescription>
+                  API calls and resource usage patterns
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="h-80">
+                <div className="h-full w-full rounded-md border border-dashed flex items-center justify-center">
+                  <p className="text-muted-foreground">Usage Chart Placeholder</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="resources" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {quickActions.map((action, index) => {
+              const Icon = action.icon;
+              return (
+                <Card key={index} className="bg-card hover:shadow-md transition-shadow cursor-pointer">
+                  <CardHeader>
+                    <div className={`w-12 h-12 rounded-lg ${action.color} flex items-center justify-center mb-2`}>
+                      <Icon className="h-6 w-6 text-white" />
+                    </div>
+                    <CardTitle className="text-lg">{action.title}</CardTitle>
+                    <CardDescription>{action.description}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button className="w-full">
+                      Get Started
+                      <ArrowUpRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
         </TabsContent>
       </Tabs>
     </div>

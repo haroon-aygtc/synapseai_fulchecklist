@@ -1,20 +1,19 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useCallback } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -23,615 +22,664 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog";
+} from '@/components/ui/dialog';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
+  Workflow,
   Plus,
-  Save,
-  Play,
-  Settings,
-  X,
-  ArrowRight,
-  ChevronRight,
   Search,
+  Filter,
+  MoreHorizontal,
+  Play,
+  Pause,
+  Settings,
+  Copy,
   Trash2,
   Edit,
-  Copy,
-  Eye,
-  PlusCircle,
-  Workflow,
-  Bot,
-  Code,
-  Database,
-  FileText,
+  Activity,
+  Clock,
   Zap,
+  BarChart3,
+  Grid3X3,
+  List,
+  Star,
+  Users,
+  Calendar,
+  TrendingUp,
+  Bot,
   Wrench,
-} from "lucide-react";
+  GitBranch,
+  Timer,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  Save,
+  Download,
+  Upload,
+  Eye,
+  Code,
+  Layers
+} from 'lucide-react';
 
-interface WorkflowNode {
-  id: string;
-  type: "agent" | "tool" | "condition" | "trigger";
-  name: string;
-  description?: string;
-  position: { x: number; y: number };
-  connections: string[];
+interface WorkflowBuilderProps {
+  className?: string;
 }
 
-interface WorkflowData {
-  id: string;
-  name: string;
-  description: string;
-  nodes: WorkflowNode[];
-  createdAt: string;
-  updatedAt: string;
-  status: "draft" | "active" | "inactive";
-}
+const workflowTemplates = [
+  {
+    id: 'customer-support',
+    name: 'Customer Support Flow',
+    description: 'Automated customer inquiry handling with escalation',
+    category: 'Support',
+    nodes: 5,
+    complexity: 'Simple',
+    color: 'bg-blue-500'
+  },
+  {
+    id: 'data-processing',
+    name: 'Data Processing Pipeline',
+    description: 'Extract, transform, and load data workflows',
+    category: 'Data',
+    nodes: 8,
+    complexity: 'Medium',
+    color: 'bg-green-500'
+  },
+  {
+    id: 'content-generation',
+    name: 'Content Generation Flow',
+    description: 'Multi-step content creation and optimization',
+    category: 'Content',
+    nodes: 6,
+    complexity: 'Simple',
+    color: 'bg-purple-500'
+  },
+  {
+    id: 'sales-automation',
+    name: 'Sales Automation',
+    description: 'Lead qualification and follow-up automation',
+    category: 'Sales',
+    nodes: 12,
+    complexity: 'Complex',
+    color: 'bg-orange-500'
+  }
+];
 
-const WorkflowBuilder = () => {
-  const [activeTab, setActiveTab] = useState("canvas");
-  const [selectedNode, setSelectedNode] = useState<WorkflowNode | null>(null);
-  const [isPropertiesOpen, setIsPropertiesOpen] = useState(false);
-  const [isAddNodeDialogOpen, setIsAddNodeDialogOpen] = useState(false);
+const workflows = [
+  {
+    id: 1,
+    name: 'Customer Onboarding Flow',
+    description: 'Automated customer onboarding with document processing',
+    status: 'active',
+    category: 'Support',
+    nodes: 8,
+    executions: 1247,
+    successRate: 98.5,
+    avgDuration: '2.3m',
+    lastRun: '5 minutes ago',
+    created: '2024-01-15',
+    author: 'John Doe',
+    favorite: true,
+    tags: ['onboarding', 'automation', 'documents']
+  },
+  {
+    id: 2,
+    name: 'Lead Scoring Pipeline',
+    description: 'Intelligent lead scoring with multiple data sources',
+    status: 'active',
+    category: 'Sales',
+    nodes: 12,
+    executions: 892,
+    successRate: 96.2,
+    avgDuration: '1.8m',
+    lastRun: '12 minutes ago',
+    created: '2024-01-10',
+    author: 'Jane Smith',
+    favorite: false,
+    tags: ['sales', 'scoring', 'crm']
+  },
+  {
+    id: 3,
+    name: 'Content Moderation System',
+    description: 'AI-powered content review and moderation',
+    status: 'paused',
+    category: 'Content',
+    nodes: 6,
+    executions: 634,
+    successRate: 99.1,
+    avgDuration: '0.8m',
+    lastRun: '2 hours ago',
+    created: '2024-01-08',
+    author: 'Mike Johnson',
+    favorite: true,
+    tags: ['content', 'moderation', 'ai']
+  },
+  {
+    id: 4,
+    name: 'Invoice Processing Flow',
+    description: 'Automated invoice extraction and validation',
+    status: 'active',
+    category: 'Finance',
+    nodes: 10,
+    executions: 423,
+    successRate: 94.8,
+    avgDuration: '3.1m',
+    lastRun: '25 minutes ago',
+    created: '2024-01-05',
+    author: 'Sarah Wilson',
+    favorite: false,
+    tags: ['finance', 'invoices', 'ocr']
+  },
+  {
+    id: 5,
+    name: 'Social Media Monitor',
+    description: 'Real-time social media monitoring and response',
+    status: 'inactive',
+    category: 'Marketing',
+    nodes: 7,
+    executions: 156,
+    successRate: 97.3,
+    avgDuration: '1.2m',
+    lastRun: '3 days ago',
+    created: '2024-01-03',
+    author: 'Tom Brown',
+    favorite: false,
+    tags: ['social', 'monitoring', 'marketing']
+  }
+];
 
-  // Sample workflow data
-  const [workflow, setWorkflow] = useState<WorkflowData>({
-    id: "wf-1",
-    name: "Customer Support Workflow",
-    description: "Handles customer inquiries and routes to appropriate agents",
-    nodes: [
-      {
-        id: "node-1",
-        type: "trigger",
-        name: "New Support Request",
-        description: "Triggered when a new support request is received",
-        position: { x: 100, y: 100 },
-        connections: ["node-2"],
-      },
-      {
-        id: "node-2",
-        type: "agent",
-        name: "Triage Agent",
-        description: "Analyzes the request and determines the category",
-        position: { x: 300, y: 100 },
-        connections: ["node-3", "node-4"],
-      },
-      {
-        id: "node-3",
-        type: "condition",
-        name: "Is Technical Issue?",
-        description: "Checks if the request is a technical issue",
-        position: { x: 500, y: 50 },
-        connections: ["node-5"],
-      },
-      {
-        id: "node-4",
-        type: "condition",
-        name: "Is Billing Issue?",
-        description: "Checks if the request is a billing issue",
-        position: { x: 500, y: 150 },
-        connections: ["node-6"],
-      },
-      {
-        id: "node-5",
-        type: "agent",
-        name: "Technical Support Agent",
-        description: "Handles technical support requests",
-        position: { x: 700, y: 50 },
-        connections: [],
-      },
-      {
-        id: "node-6",
-        type: "agent",
-        name: "Billing Support Agent",
-        description: "Handles billing inquiries",
-        position: { x: 700, y: 150 },
-        connections: [],
-      },
-    ],
-    createdAt: "2023-06-15T10:30:00Z",
-    updatedAt: "2023-06-16T14:45:00Z",
-    status: "draft",
+export default function WorkflowBuilder({ className }: WorkflowBuilderProps) {
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
+
+  const categories = ['all', 'Support', 'Sales', 'Content', 'Data', 'Finance', 'Marketing'];
+
+  const filteredWorkflows = workflows.filter(workflow => {
+    const matchesSearch = workflow.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         workflow.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         workflow.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
+    const matchesCategory = selectedCategory === 'all' || workflow.category === selectedCategory;
+    const matchesStatus = selectedStatus === 'all' || workflow.status === selectedStatus;
+    
+    return matchesSearch && matchesCategory && matchesStatus;
   });
 
-  // Sample available components for the toolbox
-  const availableComponents = {
-    agents: [
-      {
-        id: "agent-1",
-        name: "Customer Service Agent",
-        description: "Handles general customer inquiries",
-      },
-      {
-        id: "agent-2",
-        name: "Technical Support Agent",
-        description: "Resolves technical issues",
-      },
-      {
-        id: "agent-3",
-        name: "Sales Agent",
-        description: "Handles sales inquiries and processes",
-      },
-    ],
-    tools: [
-      {
-        id: "tool-1",
-        name: "Database Lookup",
-        description: "Retrieves customer information from database",
-      },
-      {
-        id: "tool-2",
-        name: "Email Sender",
-        description: "Sends automated emails to customers",
-      },
-      {
-        id: "tool-3",
-        name: "Ticket Creator",
-        description: "Creates support tickets in the system",
-      },
-    ],
-    conditions: [
-      {
-        id: "condition-1",
-        name: "Customer Type Check",
-        description: "Routes based on customer type",
-      },
-      {
-        id: "condition-2",
-        name: "Sentiment Analysis",
-        description: "Routes based on message sentiment",
-      },
-      {
-        id: "condition-3",
-        name: "Time-based Routing",
-        description: "Routes based on time of day",
-      },
-    ],
-    triggers: [
-      {
-        id: "trigger-1",
-        name: "New Message",
-        description: "Triggered when a new message is received",
-      },
-      {
-        id: "trigger-2",
-        name: "Scheduled",
-        description: "Triggered on a schedule",
-      },
-      {
-        id: "trigger-3",
-        name: "API Webhook",
-        description: "Triggered by an external API call",
-      },
-    ],
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'active': return 'bg-green-500';
+      case 'paused': return 'bg-yellow-500';
+      case 'inactive': return 'bg-gray-500';
+      default: return 'bg-gray-500';
+    }
   };
 
-  const handleNodeSelect = (node: WorkflowNode) => {
-    setSelectedNode(node);
-    setIsPropertiesOpen(true);
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'active': return CheckCircle;
+      case 'paused': return AlertCircle;
+      case 'inactive': return XCircle;
+      default: return XCircle;
+    }
   };
 
-  const handleAddNode = (type: string, componentId: string) => {
-    // Implementation would add a new node to the workflow
-    setIsAddNodeDialogOpen(false);
-  };
-
-  const getNodeIcon = (type: string) => {
-    switch (type) {
-      case "agent":
-        return <Bot className="h-4 w-4" />;
-      case "tool":
-        return <Wrench className="h-4 w-4" />;
-      case "condition":
-        return <Code className="h-4 w-4" />;
-      case "trigger":
-        return <Zap className="h-4 w-4" />;
-      default:
-        return <Workflow className="h-4 w-4" />;
+  const getComplexityColor = (complexity: string) => {
+    switch (complexity) {
+      case 'Simple': return 'text-green-600 bg-green-100';
+      case 'Medium': return 'text-yellow-600 bg-yellow-100';
+      case 'Complex': return 'text-red-600 bg-red-100';
+      default: return 'text-gray-600 bg-gray-100';
     }
   };
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className={`space-y-6 p-6 bg-background ${className || ''}`}>
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b">
-        <div className="flex items-center space-x-4">
-          <Workflow className="h-6 w-6" />
-          <div>
-            <h1 className="text-xl font-semibold">{workflow.name}</h1>
-            <p className="text-sm text-muted-foreground">
-              {workflow.description}
-            </p>
-          </div>
-          <Badge variant={workflow.status === "active" ? "default" : "outline"}>
-            {workflow.status.charAt(0).toUpperCase() + workflow.status.slice(1)}
-          </Badge>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Workflow Builder</h1>
+          <p className="text-muted-foreground">
+            Design and orchestrate complex AI workflows with visual tools
+          </p>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center gap-2">
           <Button variant="outline" size="sm">
-            <Eye className="h-4 w-4 mr-2" /> Preview
+            <Upload className="mr-2 h-4 w-4" />
+            Import
           </Button>
           <Button variant="outline" size="sm">
-            <Play className="h-4 w-4 mr-2" /> Test
+            <Filter className="mr-2 h-4 w-4" />
+            Filter
           </Button>
-          <Button size="sm">
-            <Save className="h-4 w-4 mr-2" /> Save
-          </Button>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Toolbox Panel */}
-        <div className="w-64 border-r bg-background p-4 flex flex-col">
-          <div className="mb-4">
-            <h2 className="text-sm font-semibold mb-2">Components</h2>
-            <div className="relative">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search components..." className="pl-8" />
-            </div>
-          </div>
-
-          <Tabs defaultValue="agents" className="flex-1">
-            <TabsList className="grid grid-cols-4 w-full">
-              <TabsTrigger value="agents">
-                <Bot className="h-4 w-4" />
-              </TabsTrigger>
-              <TabsTrigger value="tools">
-                <Wrench className="h-4 w-4" />
-              </TabsTrigger>
-              <TabsTrigger value="conditions">
-                <Code className="h-4 w-4" />
-              </TabsTrigger>
-              <TabsTrigger value="triggers">
-                <Zap className="h-4 w-4" />
-              </TabsTrigger>
-            </TabsList>
-
-            <ScrollArea className="flex-1 mt-2">
-              <TabsContent value="agents" className="space-y-2 mt-2">
-                {availableComponents.agents.map((agent) => (
-                  <Card key={agent.id} className="cursor-grab">
-                    <CardHeader className="p-3">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm">{agent.name}</CardTitle>
-                        <Bot className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <CardDescription className="text-xs">
-                        {agent.description}
-                      </CardDescription>
-                    </CardHeader>
-                  </Card>
-                ))}
-              </TabsContent>
-
-              <TabsContent value="tools" className="space-y-2 mt-2">
-                {availableComponents.tools.map((tool) => (
-                  <Card key={tool.id} className="cursor-grab">
-                    <CardHeader className="p-3">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm">{tool.name}</CardTitle>
-                        <Wrench className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <CardDescription className="text-xs">
-                        {tool.description}
-                      </CardDescription>
-                    </CardHeader>
-                  </Card>
-                ))}
-              </TabsContent>
-
-              <TabsContent value="conditions" className="space-y-2 mt-2">
-                {availableComponents.conditions.map((condition) => (
-                  <Card key={condition.id} className="cursor-grab">
-                    <CardHeader className="p-3">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm">
-                          {condition.name}
-                        </CardTitle>
-                        <Code className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <CardDescription className="text-xs">
-                        {condition.description}
-                      </CardDescription>
-                    </CardHeader>
-                  </Card>
-                ))}
-              </TabsContent>
-
-              <TabsContent value="triggers" className="space-y-2 mt-2">
-                {availableComponents.triggers.map((trigger) => (
-                  <Card key={trigger.id} className="cursor-grab">
-                    <CardHeader className="p-3">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm">
-                          {trigger.name}
-                        </CardTitle>
-                        <Zap className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <CardDescription className="text-xs">
-                        {trigger.description}
-                      </CardDescription>
-                    </CardHeader>
-                  </Card>
-                ))}
-              </TabsContent>
-            </ScrollArea>
-          </Tabs>
-        </div>
-
-        {/* Canvas Area */}
-        <div className="flex-1 relative bg-muted/20 overflow-auto">
-          <div className="absolute inset-0 p-4">
-            {/* This would be replaced with a proper canvas implementation */}
-            <div className="relative w-full h-full">
-              {workflow.nodes.map((node) => (
-                <div
-                  key={node.id}
-                  className="absolute p-2 bg-background border rounded-md shadow-sm cursor-pointer"
-                  style={{
-                    left: `${node.position.x}px`,
-                    top: `${node.position.y}px`,
-                    minWidth: "150px",
-                  }}
-                  onClick={() => handleNodeSelect(node)}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center">
-                      {getNodeIcon(node.type)}
-                      <span className="ml-2 font-medium text-sm">
-                        {node.name}
-                      </span>
-                    </div>
-                    <Badge variant="outline" className="text-xs">
-                      {node.type}
-                    </Badge>
-                  </div>
-                  {node.description && (
-                    <p className="text-xs text-muted-foreground">
-                      {node.description}
-                    </p>
-                  )}
-                </div>
-              ))}
-
-              {/* This would be replaced with proper connection lines */}
-              {workflow.nodes.map((node) =>
-                node.connections.map((targetId) => {
-                  const target = workflow.nodes.find((n) => n.id === targetId);
-                  if (!target) return null;
-
-                  // Simple straight line connection - in a real implementation this would be SVG paths
-                  return (
-                    <div
-                      key={`${node.id}-${targetId}`}
-                      className="absolute bg-muted-foreground"
-                      style={{
-                        left: `${node.position.x + 75}px`,
-                        top: `${node.position.y + 30}px`,
-                        width: `${target.position.x - node.position.x - 75}px`,
-                        height: "2px",
-                      }}
-                    />
-                  );
-                }),
-              )}
-
-              {/* Add node button */}
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="absolute bottom-4 right-4 rounded-full shadow-md"
-                      onClick={() => setIsAddNodeDialogOpen(true)}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Add new node</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          </div>
-        </div>
-
-        {/* Properties Panel */}
-        {isPropertiesOpen && selectedNode && (
-          <div className="w-80 border-l bg-background p-4 flex flex-col">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold">Node Properties</h2>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setIsPropertiesOpen(false)}
-              >
-                <X className="h-4 w-4" />
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button size="sm">
+                <Plus className="mr-2 h-4 w-4" />
+                Create Workflow
               </Button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">Type</label>
-                <div className="flex items-center mt-1">
-                  {getNodeIcon(selectedNode.type)}
-                  <span className="ml-2 capitalize">{selectedNode.type}</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium">Name</label>
-                <Input
-                  value={selectedNode.name}
-                  onChange={(e) => {
-                    // In a real implementation, this would update the node
-                  }}
-                  className="mt-1"
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium">Description</label>
-                <Input
-                  value={selectedNode.description || ""}
-                  onChange={(e) => {
-                    // In a real implementation, this would update the node
-                  }}
-                  className="mt-1"
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium">Position</label>
-                <div className="grid grid-cols-2 gap-2 mt-1">
-                  <div>
-                    <label className="text-xs text-muted-foreground">X</label>
-                    <Input
-                      type="number"
-                      value={selectedNode.position.x}
-                      onChange={(e) => {
-                        // In a real implementation, this would update the node
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">Y</label>
-                    <Input
-                      type="number"
-                      value={selectedNode.position.y}
-                      onChange={(e) => {
-                        // In a real implementation, this would update the node
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium">Connections</label>
-                <div className="mt-1 space-y-2">
-                  {selectedNode.connections.length > 0 ? (
-                    selectedNode.connections.map((connectionId) => {
-                      const connectedNode = workflow.nodes.find(
-                        (n) => n.id === connectionId,
-                      );
-                      return connectedNode ? (
-                        <div
-                          key={connectionId}
-                          className="flex items-center justify-between bg-muted p-2 rounded-md"
-                        >
-                          <div className="flex items-center">
-                            {getNodeIcon(connectedNode.type)}
-                            <span className="ml-2 text-sm">
-                              {connectedNode.name}
-                            </span>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[700px]">
+              <DialogHeader>
+                <DialogTitle>Create New Workflow</DialogTitle>
+                <DialogDescription>
+                  Start with a template or create a workflow from scratch.
+                </DialogDescription>
+              </DialogHeader>
+              <Tabs defaultValue="templates" className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="templates">Templates</TabsTrigger>
+                  <TabsTrigger value="scratch">From Scratch</TabsTrigger>
+                </TabsList>
+                <TabsContent value="templates" className="space-y-4">
+                  <div className="grid gap-3 max-h-96 overflow-y-auto">
+                    {workflowTemplates.map((template) => (
+                      <Card key={template.id} className="cursor-pointer hover:shadow-md transition-shadow">
+                        <CardHeader className="pb-3">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-lg ${template.color} flex items-center justify-center`}>
+                              <Workflow className="h-5 w-5 text-white" />
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between">
+                                <CardTitle className="text-lg">{template.name}</CardTitle>
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline">{template.category}</Badge>
+                                  <Badge className={getComplexityColor(template.complexity)}>
+                                    {template.complexity}
+                                  </Badge>
+                                </div>
+                              </div>
+                              <CardDescription className="mt-1">{template.description}</CardDescription>
+                              <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+                                <span className="flex items-center gap-1">
+                                  <Layers className="h-3 w-3" />
+                                  {template.nodes} nodes
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                          <Button variant="ghost" size="icon">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ) : null;
-                    })
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No connections
+                        </CardHeader>
+                      </Card>
+                    ))}
+                  </div>
+                </TabsContent>
+                <TabsContent value="scratch" className="space-y-4">
+                  <div className="text-center py-8">
+                    <Code className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                    <h3 className="text-lg font-medium mb-2">Start from Scratch</h3>
+                    <p className="text-muted-foreground mb-4">
+                      Create a custom workflow using our visual workflow builder
                     </p>
-                  )}
-                  <Button variant="outline" size="sm" className="w-full mt-2">
-                    <PlusCircle className="h-4 w-4 mr-2" /> Add Connection
-                  </Button>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="flex justify-between">
-                <Button variant="outline" size="sm">
-                  <Copy className="h-4 w-4 mr-2" /> Duplicate
-                </Button>
-                <Button variant="destructive" size="sm">
-                  <Trash2 className="h-4 w-4 mr-2" /> Delete
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
+                    <Button>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Open Workflow Builder
+                    </Button>
+                  </div>
+                </TabsContent>
+              </Tabs>
+              <DialogFooter>
+                <Button variant="outline">Cancel</Button>
+                <Button>Create Workflow</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
-      {/* Add Node Dialog */}
-      <Dialog open={isAddNodeDialogOpen} onOpenChange={setIsAddNodeDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add New Node</DialogTitle>
-            <DialogDescription>
-              Select the type of node you want to add to your workflow.
-            </DialogDescription>
-          </DialogHeader>
+      {/* Search and Filters */}
+      <div className="flex items-center gap-4">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search workflows..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">
+              Category: {selectedCategory === 'all' ? 'All' : selectedCategory}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            {categories.map((category) => (
+              <DropdownMenuItem key={category} onClick={() => setSelectedCategory(category)}>
+                {category === 'all' ? 'All Categories' : category}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">
+              Status: {selectedStatus === 'all' ? 'All' : selectedStatus.charAt(0).toUpperCase() + selectedStatus.slice(1)}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onClick={() => setSelectedStatus('all')}>
+              All Status
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSelectedStatus('active')}>
+              Active
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSelectedStatus('paused')}>
+              Paused
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSelectedStatus('inactive')}>
+              Inactive
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <div className="flex items-center gap-1 border rounded-md">
+          <Button
+            variant={viewMode === 'grid' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setViewMode('grid')}
+          >
+            <Grid3X3 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant={viewMode === 'list' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setViewMode('list')}
+          >
+            <List className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
 
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-1 gap-2">
-              <label className="text-sm font-medium">Node Type</label>
-              <Select>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select node type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="agent">Agent</SelectItem>
-                  <SelectItem value="tool">Tool</SelectItem>
-                  <SelectItem value="condition">Condition</SelectItem>
-                  <SelectItem value="trigger">Trigger</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+      {/* Workflows Display */}
+      <Tabs defaultValue="all" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="all">All Workflows ({filteredWorkflows.length})</TabsTrigger>
+          <TabsTrigger value="favorites">Favorites ({filteredWorkflows.filter(w => w.favorite).length})</TabsTrigger>
+          <TabsTrigger value="active">Active ({filteredWorkflows.filter(w => w.status === 'active').length})</TabsTrigger>
+          <TabsTrigger value="recent">Recently Modified</TabsTrigger>
+        </TabsList>
 
-            <div className="grid grid-cols-1 gap-2">
-              <label className="text-sm font-medium">Component</label>
-              <Select>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select component" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="component-1">
-                    Customer Service Agent
-                  </SelectItem>
-                  <SelectItem value="component-2">
-                    Technical Support Agent
-                  </SelectItem>
-                  <SelectItem value="component-3">Sales Agent</SelectItem>
-                </SelectContent>
-              </Select>
+        <TabsContent value="all" className="space-y-4">
+          {viewMode === 'grid' ? (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {filteredWorkflows.map((workflow) => {
+                const StatusIcon = getStatusIcon(workflow.status);
+                return (
+                  <Card key={workflow.id} className="bg-card hover:shadow-md transition-shadow">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-primary/10">
+                            <Workflow className="h-5 w-5 text-primary" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <CardTitle className="text-lg">{workflow.name}</CardTitle>
+                              {workflow.favorite && <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />}
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <StatusIcon className={`h-3 w-3 ${
+                                workflow.status === 'active' ? 'text-green-600' :
+                                workflow.status === 'paused' ? 'text-yellow-600' :
+                                'text-gray-600'
+                              }`} />
+                              <span className="text-xs text-muted-foreground capitalize">{workflow.status}</span>
+                              <Badge variant="outline" className="text-xs">
+                                {workflow.category}
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem>
+                              <Eye className="mr-2 h-4 w-4" />
+                              View
+                            </DropdownMenuItem>
+                            <DropdownMenuItem>
+                              <Edit className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem>
+                              <Copy className="mr-2 h-4 w-4" />
+                              Clone
+                            </DropdownMenuItem>
+                            <DropdownMenuItem>
+                              <Download className="mr-2 h-4 w-4" />
+                              Export
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem className="text-red-600">
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <p className="text-sm text-muted-foreground">{workflow.description}</p>
+                      
+                      <div className="flex flex-wrap gap-1">
+                        {workflow.tags.map((tag) => (
+                          <Badge key={tag} variant="secondary" className="text-xs">
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <div className="flex items-center gap-1 text-muted-foreground">
+                            <Activity className="h-3 w-3" />
+                            Executions
+                          </div>
+                          <div className="font-medium">{workflow.executions.toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1 text-muted-foreground">
+                            <TrendingUp className="h-3 w-3" />
+                            Success Rate
+                          </div>
+                          <div className="font-medium">{workflow.successRate}%</div>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1 text-muted-foreground">
+                            <Timer className="h-3 w-3" />
+                            Avg Duration
+                          </div>
+                          <div className="font-medium">{workflow.avgDuration}</div>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1 text-muted-foreground">
+                            <Layers className="h-3 w-3" />
+                            Nodes
+                          </div>
+                          <div className="font-medium">{workflow.nodes}</div>
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-muted-foreground">
+                        <div>Created by {workflow.author}</div>
+                        <div>Last run: {workflow.lastRun}</div>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <Button size="sm" className="flex-1">
+                          <Eye className="mr-2 h-4 w-4" />
+                          View
+                        </Button>
+                        <Button variant="outline" size="sm">
+                          {workflow.status === 'active' ? (
+                            <Pause className="h-4 w-4" />
+                          ) : (
+                            <Play className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button variant="outline" size="sm">
+                          <BarChart3 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
+          ) : (
+            <Card className="bg-card">
+              <CardContent className="p-0">
+                <div className="divide-y">
+                  {filteredWorkflows.map((workflow) => {
+                    const StatusIcon = getStatusIcon(workflow.status);
+                    return (
+                      <div key={workflow.id} className="flex items-center gap-4 p-4 hover:bg-muted/50">
+                        <div className="p-2 rounded-lg bg-primary/10">
+                          <Workflow className="h-5 w-5 text-primary" />
+                        </div>
+                        
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-medium">{workflow.name}</h3>
+                            {workflow.favorite && <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />}
+                            <StatusIcon className={`h-3 w-3 ${
+                              workflow.status === 'active' ? 'text-green-600' :
+                              workflow.status === 'paused' ? 'text-yellow-600' :
+                              'text-gray-600'
+                            }`} />
+                            <Badge variant="outline" className="text-xs">
+                              {workflow.category}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground truncate">{workflow.description}</p>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Created by {workflow.author} • Last run: {workflow.lastRun}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-6 text-sm">
+                          <div className="text-center">
+                            <div className="font-medium">{workflow.executions.toLocaleString()}</div>
+                            <div className="text-xs text-muted-foreground">Executions</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="font-medium">{workflow.successRate}%</div>
+                            <div className="text-xs text-muted-foreground">Success</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="font-medium">{workflow.avgDuration}</div>
+                            <div className="text-xs text-muted-foreground">Duration</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="font-medium">{workflow.nodes}</div>
+                            <div className="text-xs text-muted-foreground">Nodes</div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Button size="sm">
+                            <Eye className="mr-2 h-4 w-4" />
+                            View
+                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem>
+                                <Edit className="mr-2 h-4 w-4" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem>
+                                <Copy className="mr-2 h-4 w-4" />
+                                Clone
+                              </DropdownMenuItem>
+                              <DropdownMenuItem>
+                                <Download className="mr-2 h-4 w-4" />
+                                Export
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-red-600">
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="favorites">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {filteredWorkflows.filter(workflow => workflow.favorite).map((workflow) => (
+              <Card key={workflow.id} className="bg-card">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                    {workflow.name}
+                  </CardTitle>
+                  <CardDescription>{workflow.description}</CardDescription>
+                </CardHeader>
+              </Card>
+            ))}
           </div>
+        </TabsContent>
 
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setIsAddNodeDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button onClick={() => handleAddNode("agent", "component-1")}>
-              Add Node
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <TabsContent value="active">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {filteredWorkflows.filter(workflow => workflow.status === 'active').map((workflow) => (
+              <Card key={workflow.id} className="bg-card">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-green-600" />
+                    {workflow.name}
+                  </CardTitle>
+                  <CardDescription>{workflow.description}</CardDescription>
+                </CardHeader>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="recent">
+          <Card className="bg-card">
+            <CardHeader>
+              <CardTitle>Recently Modified Workflows</CardTitle>
+              <CardDescription>Workflows that have been updated recently</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {filteredWorkflows.slice(0, 5).map((workflow) => (
+                  <div key={workflow.id} className="flex items-center gap-4 p-3 rounded-lg border">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Workflow className="h-4 w-4 text-primary" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-medium">{workflow.name}</p>
+                      <p className="text-sm text-muted-foreground">Modified {workflow.lastRun}</p>
+                    </div>
+                    <Button size="sm">
+                      <Eye className="mr-2 h-4 w-4" />
+                      View
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
-};
-
-export default WorkflowBuilder;
+}
