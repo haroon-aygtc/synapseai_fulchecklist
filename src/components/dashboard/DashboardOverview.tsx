@@ -1,494 +1,504 @@
-"use client";
+'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { 
+  Bot, 
+  Wrench, 
+  Workflow, 
+  TrendingUp, 
+  Users, 
+  Activity,
+  Plus,
+  ArrowRight,
+  Zap,
+  Clock,
+  DollarSign,
+  AlertCircle,
+  CheckCircle,
+  XCircle,
+  BarChart3,
+  PieChart,
+  LineChart
+} from 'lucide-react';
+import { useAuth } from '@/lib/auth/auth-context';
+import { agentService } from '@/lib/services/agent-service';
+import { toolService } from '@/lib/services/tool-service';
+import { workflowService } from '@/lib/services/workflow-service';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  BarChart3, 
-  Bot, 
-  Workflow, 
-  Zap, 
-  TrendingUp, 
-  TrendingDown,
-  Activity,
-  Clock,
-  DollarSign,
-  Users,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-  Play,
-  Pause,
-  MoreHorizontal,
-  ArrowUpRight,
-  ArrowDownRight
-} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-interface MetricCardProps {
-  title: string;
-  value: string;
-  change: string;
-  changeType: 'positive' | 'negative' | 'neutral';
-  icon: React.ComponentType<{ className?: string }>;
-  description?: string;
+interface DashboardStats {
+  agents: {
+    total: number;
+    active: number;
+    draft: number;
+    totalSessions: number;
+    avgResponseTime: number;
+  };
+  tools: {
+    total: number;
+    active: number;
+    totalExecutions: number;
+    successRate: number;
+  };
+  workflows: {
+    total: number;
+    active: number;
+    running: number;
+    totalExecutions: number;
+    successRate: number;
+  };
+  costs: {
+    thisMonth: number;
+    lastMonth: number;
+    trend: number;
+    breakdown: Array<{
+      provider: string;
+      amount: number;
+      percentage: number;
+    }>;
+  };
 }
 
-interface ActivityItem {
+interface RecentActivity {
   id: string;
-  type: 'agent' | 'workflow' | 'tool';
-  name: string;
+  type: 'agent' | 'tool' | 'workflow';
   action: string;
-  timestamp: string;
+  name: string;
+  timestamp: Date;
   status: 'success' | 'error' | 'running';
-  user: string;
 }
-
-interface SystemHealth {
-  overall: number;
-  agents: number;
-  workflows: number;
-  tools: number;
-  providers: number;
-}
-
-const MetricCard: React.FC<MetricCardProps> = ({ 
-  title, 
-  value, 
-  change, 
-  changeType, 
-  icon: Icon, 
-  description 
-}) => {
-  const changeIcon = changeType === 'positive' ? ArrowUpRight : ArrowDownRight;
-  const ChangeIcon = changeIcon;
-
-  return (
-    <Card className="relative overflow-hidden">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
-        <div className="flex items-center space-x-2 text-xs text-muted-foreground">
-          <div className={cn(
-            "flex items-center",
-            changeType === 'positive' && "text-green-600",
-            changeType === 'negative' && "text-red-600"
-          )}>
-            <ChangeIcon className="h-3 w-3 mr-1" />
-            {change}
-          </div>
-          {description && <span>from last month</span>}
-        </div>
-        {description && (
-          <p className="text-xs text-muted-foreground mt-1">{description}</p>
-        )}
-      </CardContent>
-    </Card>
-  );
-};
 
 export default function DashboardOverview() {
-  const [systemHealth, setSystemHealth] = useState<SystemHealth>({
-    overall: 98,
-    agents: 95,
-    workflows: 100,
-    tools: 92,
-    providers: 97
-  });
+  const { user, organization, hasPermission } = useAuth();
+  const router = useRouter();
+  
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([
-    {
-      id: '1',
-      type: 'agent',
-      name: 'Customer Support Bot',
-      action: 'Completed 45 conversations',
-      timestamp: '2 minutes ago',
-      status: 'success',
-      user: 'System'
-    },
-    {
-      id: '2',
-      type: 'workflow',
-      name: 'Lead Processing Pipeline',
-      action: 'Processed 12 new leads',
-      timestamp: '5 minutes ago',
-      status: 'success',
-      user: 'John Doe'
-    },
-    {
-      id: '3',
-      type: 'tool',
-      name: 'Email Sender',
-      action: 'Failed to send notification',
-      timestamp: '8 minutes ago',
-      status: 'error',
-      user: 'System'
-    },
-    {
-      id: '4',
-      type: 'agent',
-      name: 'Data Analysis Agent',
-      action: 'Currently analyzing dataset',
-      timestamp: '12 minutes ago',
-      status: 'running',
-      user: 'Jane Smith'
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
+  const loadDashboardData = async () => {
+    try {
+      setIsLoading(true);
+      
+      // Load stats from all services
+      const [agentsData, toolsData, workflowsData] = await Promise.all([
+        agentService.getAgents({ limit: 1 }),
+        toolService.getTools({ limit: 1 }),
+        workflowService.getWorkflows({ limit: 1 })
+      ]);
+
+      // Mock stats for now - in real implementation, these would come from analytics endpoints
+      const mockStats: DashboardStats = {
+        agents: {
+          total: agentsData.total,
+          active: Math.floor(agentsData.total * 0.8),
+          draft: Math.floor(agentsData.total * 0.2),
+          totalSessions: 1247,
+          avgResponseTime: 1.2
+        },
+        tools: {
+          total: toolsData.total,
+          active: Math.floor(toolsData.total * 0.9),
+          totalExecutions: 5432,
+          successRate: 98.5
+        },
+        workflows: {
+          total: workflowsData.total,
+          active: Math.floor(workflowsData.total * 0.7),
+          running: 3,
+          totalExecutions: 892,
+          successRate: 94.2
+        },
+        costs: {
+          thisMonth: 1247.50,
+          lastMonth: 1089.30,
+          trend: 14.5,
+          breakdown: [
+            { provider: 'OpenAI', amount: 687.20, percentage: 55.1 },
+            { provider: 'Claude', amount: 324.80, percentage: 26.0 },
+            { provider: 'Gemini', amount: 235.50, percentage: 18.9 }
+          ]
+        }
+      };
+
+      setStats(mockStats);
+
+      // Mock recent activity
+      const mockActivity: RecentActivity[] = [
+        {
+          id: '1',
+          type: 'agent',
+          action: 'executed',
+          name: 'Customer Support Agent',
+          timestamp: new Date(Date.now() - 5 * 60 * 1000),
+          status: 'success'
+        },
+        {
+          id: '2',
+          type: 'workflow',
+          action: 'completed',
+          name: 'Data Processing Pipeline',
+          timestamp: new Date(Date.now() - 15 * 60 * 1000),
+          status: 'success'
+        },
+        {
+          id: '3',
+          type: 'tool',
+          action: 'failed',
+          name: 'Email Sender',
+          timestamp: new Date(Date.now() - 30 * 60 * 1000),
+          status: 'error'
+        }
+      ];
+
+      setRecentActivity(mockActivity);
+    } catch (error) {
+      console.error('Failed to load dashboard data:', error);
+    } finally {
+      setIsLoading(false);
     }
-  ]);
+  };
+
+  const quickActions = [
+    {
+      title: 'Create Agent',
+      description: 'Build a new AI agent',
+      icon: Bot,
+      href: '/agents/new',
+      gradient: 'from-blue-500 to-cyan-500',
+      permission: 'AGENTS_CREATE'
+    },
+    {
+      title: 'Add Tool',
+      description: 'Integrate a new tool',
+      icon: Wrench,
+      href: '/tools/new',
+      gradient: 'from-green-500 to-emerald-500',
+      permission: 'TOOLS_CREATE'
+    },
+    {
+      title: 'Build Workflow',
+      description: 'Design automation',
+      icon: Workflow,
+      href: '/workflows/new',
+      gradient: 'from-purple-500 to-pink-500',
+      permission: 'WORKFLOWS_CREATE'
+    },
+    {
+      title: 'View Analytics',
+      description: 'Monitor performance',
+      icon: BarChart3,
+      href: '/analytics',
+      gradient: 'from-orange-500 to-red-500',
+      permission: 'ANALYTICS_VIEW'
+    }
+  ];
 
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'success':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
+        return <CheckCircle className="w-4 h-4 text-green-500" />;
       case 'error':
-        return <XCircle className="h-4 w-4 text-red-500" />;
+        return <XCircle className="w-4 h-4 text-red-500" />;
       case 'running':
-        return <Play className="h-4 w-4 text-blue-500" />;
+        return <Activity className="w-4 h-4 text-blue-500 animate-pulse" />;
       default:
-        return <Clock className="h-4 w-4 text-gray-500" />;
+        return <AlertCircle className="w-4 h-4 text-yellow-500" />;
     }
   };
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'agent':
-        return <Bot className="h-4 w-4" />;
-      case 'workflow':
-        return <Workflow className="h-4 w-4" />;
-      case 'tool':
-        return <Zap className="h-4 w-4" />;
-      default:
-        return <Activity className="h-4 w-4" />;
-    }
+  const formatTimeAgo = (date: Date) => {
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
   };
 
-  // Simulate real-time updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setSystemHealth(prev => ({
-        ...prev,
-        overall: Math.max(90, Math.min(100, prev.overall + (Math.random() - 0.5) * 2))
-      }));
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, []);
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="animate-pulse">
+          <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-1/4 mb-4" />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-32 bg-slate-200 dark:bg-slate-700 rounded-lg" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6 bg-background">
+    <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Welcome back! Here's what's happening with your AI orchestration platform.
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 dark:from-slate-100 dark:to-slate-400 bg-clip-text text-transparent">
+            Welcome back, {user?.firstName}
+          </h1>
+          <p className="text-slate-600 dark:text-slate-400 mt-1">
+            Here's what's happening with your AI orchestration platform
           </p>
         </div>
-        <div className="flex items-center space-x-2">
-          <Button variant="outline" size="sm">
-            <BarChart3 className="h-4 w-4 mr-2" />
-            Export Report
-          </Button>
-          <Button size="sm">
-            <Bot className="h-4 w-4 mr-2" />
-            Create Agent
-          </Button>
+        <div className="flex items-center space-x-3 mt-4 sm:mt-0">
+          <Badge variant="outline" className="bg-green-50 dark:bg-green-950/50 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800">
+            <Activity className="w-3 h-3 mr-1" />
+            All Systems Operational
+          </Badge>
         </div>
       </div>
 
-      {/* Metrics Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          title="Active Agents"
-          value="24"
-          change="+12%"
-          changeType="positive"
-          icon={Bot}
-          description="2 new agents this week"
-        />
-        <MetricCard
-          title="Running Workflows"
-          value="8"
-          change="+4%"
-          changeType="positive"
-          icon={Workflow}
-          description="3 workflows completed today"
-        />
-        <MetricCard
-          title="API Calls"
-          value="12,847"
-          change="+23%"
-          changeType="positive"
-          icon={Activity}
-          description="Across all providers"
-        />
-        <MetricCard
-          title="Monthly Cost"
-          value="$2,847"
-          change="-8%"
-          changeType="positive"
-          icon={DollarSign}
-          description="Cost optimization working"
-        />
-      </div>
-
-      {/* Main Content Grid */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* System Health */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Activity className="h-5 w-5 mr-2" />
-              System Health
-            </CardTitle>
-            <CardDescription>
-              Real-time monitoring of all system components
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-3">
+      {/* Quick Actions */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {quickActions.map((action) => (
+          <Card 
+            key={action.title}
+            className="group cursor-pointer transition-all duration-300 hover:shadow-lg hover:shadow-slate-200/50 dark:hover:shadow-slate-800/50 hover:-translate-y-1 border-slate-200/50 dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+            onClick={() => router.push(action.href)}
+          >
+            <CardContent className="p-6">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Overall Health</span>
-                <span className="text-sm text-muted-foreground">{systemHealth.overall}%</span>
-              </div>
-              <Progress value={systemHealth.overall} className="h-2" />
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Agents</span>
-                  <span className="text-sm text-muted-foreground">{systemHealth.agents}%</span>
+                <div className={cn(
+                  "w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center shadow-lg group-hover:shadow-xl transition-all duration-300",
+                  action.gradient
+                )}>
+                  <action.icon className="w-6 h-6 text-white" />
                 </div>
-                <Progress value={systemHealth.agents} className="h-1" />
+                <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-colors" />
               </div>
-              
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Workflows</span>
-                  <span className="text-sm text-muted-foreground">{systemHealth.workflows}%</span>
-                </div>
-                <Progress value={systemHealth.workflows} className="h-1" />
+              <div className="mt-4">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100 group-hover:text-slate-700 dark:group-hover:text-slate-200">
+                  {action.title}
+                </h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  {action.description}
+                </p>
               </div>
-              
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Tools</span>
-                  <span className="text-sm text-muted-foreground">{systemHealth.tools}%</span>
-                </div>
-                <Progress value={systemHealth.tools} className="h-1" />
-              </div>
-              
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Providers</span>
-                  <span className="text-sm text-muted-foreground">{systemHealth.providers}%</span>
-                </div>
-                <Progress value={systemHealth.providers} className="h-1" />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-4 border-t">
-              <div className="flex items-center space-x-2">
-                <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-sm text-muted-foreground">All systems operational</span>
-              </div>
-              <Button variant="outline" size="sm">
-                View Details
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Quick Actions */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
-            <CardDescription>
-              Common tasks and shortcuts
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Button className="w-full justify-start" variant="outline">
-              <Bot className="h-4 w-4 mr-2" />
-              Create New Agent
-            </Button>
-            <Button className="w-full justify-start" variant="outline">
-              <Workflow className="h-4 w-4 mr-2" />
-              Build Workflow
-            </Button>
-            <Button className="w-full justify-start" variant="outline">
-              <Zap className="h-4 w-4 mr-2" />
-              Add Tool
-            </Button>
-            <Button className="w-full justify-start" variant="outline">
-              <BarChart3 className="h-4 w-4 mr-2" />
-              View Analytics
-            </Button>
-            <div className="pt-2 border-t">
-              <Button className="w-full" size="sm">
-                <Users className="h-4 w-4 mr-2" />
-                Invite Team Member
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      {/* Recent Activity & Performance */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      {/* Stats Overview */}
+      {stats && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <Card className="border-slate-200/50 dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                Active Agents
+              </CardTitle>
+              <Bot className="w-4 h-4 text-blue-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+                {stats.agents.active}
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {stats.agents.total} total agents
+              </p>
+              <div className="mt-2">
+                <Progress 
+                  value={(stats.agents.active / stats.agents.total) * 100} 
+                  className="h-1"
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200/50 dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                Tool Success Rate
+              </CardTitle>
+              <Wrench className="w-4 h-4 text-green-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+                {stats.tools.successRate}%
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {stats.tools.totalExecutions} executions
+              </p>
+              <div className="mt-2">
+                <Progress 
+                  value={stats.tools.successRate} 
+                  className="h-1"
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200/50 dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                Running Workflows
+              </CardTitle>
+              <Workflow className="w-4 h-4 text-purple-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+                {stats.workflows.running}
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {stats.workflows.active} active workflows
+              </p>
+              <div className="mt-2 flex items-center space-x-2">
+                <Activity className="w-3 h-3 text-purple-500 animate-pulse" />
+                <span className="text-xs text-purple-600 dark:text-purple-400">
+                  Live execution
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200/50 dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                Monthly Cost
+              </CardTitle>
+              <DollarSign className="w-4 h-4 text-orange-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+                ${stats.costs.thisMonth.toFixed(2)}
+              </div>
+              <p className="text-xs text-green-600 dark:text-green-400">
+                +{stats.costs.trend}% from last month
+              </p>
+              <div className="mt-2">
+                <div className="flex items-center space-x-1 text-xs text-slate-500 dark:text-slate-400">
+                  <TrendingUp className="w-3 h-3" />
+                  <span>Trending up</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Detailed Analytics */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Recent Activity */}
-        <Card>
+        <Card className="lg:col-span-2 border-slate-200/50 dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
           <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span className="flex items-center">
-                <Clock className="h-5 w-5 mr-2" />
-                Recent Activity
-              </span>
-              <Button variant="ghost" size="sm">
-                View All
-              </Button>
+            <CardTitle className="flex items-center space-x-2">
+              <Activity className="w-5 h-5 text-blue-600" />
+              <span>Recent Activity</span>
             </CardTitle>
+            <CardDescription>
+              Latest actions across your platform
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               {recentActivity.map((activity) => (
-                <div key={activity.id} className="flex items-start space-x-3 p-3 rounded-lg border bg-card/50">
-                  <div className="flex items-center space-x-2">
-                    {getTypeIcon(activity.type)}
+                <div key={activity.id} className="flex items-center space-x-4 p-3 rounded-lg bg-slate-50/50 dark:bg-slate-800/50 hover:bg-slate-100/50 dark:hover:bg-slate-700/50 transition-colors">
+                  <div className="flex-shrink-0">
                     {getStatusIcon(activity.status)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{activity.name}</p>
-                    <p className="text-sm text-muted-foreground">{activity.action}</p>
-                    <div className="flex items-center space-x-2 mt-1">
-                      <span className="text-xs text-muted-foreground">{activity.timestamp}</span>
-                      <span className="text-xs text-muted-foreground">•</span>
-                      <span className="text-xs text-muted-foreground">{activity.user}</span>
-                    </div>
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {activity.name}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {activity.action} • {formatTimeAgo(activity.timestamp)}
+                    </p>
                   </div>
-                  <Button variant="ghost" size="sm">
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
+                  <Badge 
+                    variant="outline" 
+                    className={cn(
+                      "text-xs",
+                      activity.type === 'agent' && "border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300",
+                      activity.type === 'tool' && "border-green-200 dark:border-green-800 text-green-700 dark:text-green-300",
+                      activity.type === 'workflow' && "border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300"
+                    )}
+                  >
+                    {activity.type}
+                  </Badge>
                 </div>
               ))}
             </div>
+            <div className="mt-4 pt-4 border-t border-slate-200/50 dark:border-slate-700/50">
+              <Button 
+                variant="ghost" 
+                className="w-full text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
+                onClick={() => router.push('/analytics')}
+              >
+                View all activity
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
-        {/* Performance Metrics */}
-        <Card>
+        {/* Cost Breakdown */}
+        <Card className="border-slate-200/50 dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
           <CardHeader>
-            <CardTitle className="flex items-center">
-              <TrendingUp className="h-5 w-5 mr-2" />
-              Performance Metrics
+            <CardTitle className="flex items-center space-x-2">
+              <PieChart className="w-5 h-5 text-orange-600" />
+              <span>Cost Breakdown</span>
             </CardTitle>
+            <CardDescription>
+              Provider spending this month
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs defaultValue="today" className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="today">Today</TabsTrigger>
-                <TabsTrigger value="week">Week</TabsTrigger>
-                <TabsTrigger value="month">Month</TabsTrigger>
-              </TabsList>
-              
-              <TabsContent value="today" className="space-y-4 mt-4">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">Response Time</span>
-                    <span className="text-sm font-medium">142ms</span>
+            {stats && (
+              <div className="space-y-4">
+                {stats.costs.breakdown.map((item, index) => (
+                  <div key={item.provider} className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div className={cn(
+                        "w-3 h-3 rounded-full",
+                        index === 0 && "bg-blue-500",
+                        index === 1 && "bg-green-500",
+                        index === 2 && "bg-purple-500"
+                      )} />
+                      <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                        {item.provider}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                        ${item.amount.toFixed(2)}
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {item.percentage}%
+                      </p>
+                    </div>
                   </div>
-                  <Progress value={85} className="h-2" />
+                ))}
+                <div className="pt-4 border-t border-slate-200/50 dark:border-slate-700/50">
+                  <Button 
+                    variant="outline" 
+                    className="w-full"
+                    onClick={() => router.push('/analytics/costs')}
+                  >
+                    View detailed costs
+                  </Button>
                 </div>
-                
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">Success Rate</span>
-                    <span className="text-sm font-medium">99.2%</span>
-                  </div>
-                  <Progress value={99.2} className="h-2" />
-                </div>
-                
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">Throughput</span>
-                    <span className="text-sm font-medium">1,247 req/min</span>
-                  </div>
-                  <Progress value={78} className="h-2" />
-                </div>
-                
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">Cost Efficiency</span>
-                    <span className="text-sm font-medium">92%</span>
-                  </div>
-                  <Progress value={92} className="h-2" />
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="week" className="space-y-4 mt-4">
-                <div className="text-center text-muted-foreground py-8">
-                  Weekly metrics visualization would go here
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="month" className="space-y-4 mt-4">
-                <div className="text-center text-muted-foreground py-8">
-                  Monthly metrics visualization would go here
-                </div>
-              </TabsContent>
-            </Tabs>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
-
-      {/* Alerts & Notifications */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <AlertTriangle className="h-5 w-5 mr-2" />
-            System Alerts
-          </CardTitle>
-          <CardDescription>
-            Important notifications and system alerts
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            <div className="flex items-center space-x-3 p-3 rounded-lg border border-yellow-200 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-900/20">
-              <AlertTriangle className="h-4 w-4 text-yellow-600" />
-              <div className="flex-1">
-                <p className="text-sm font-medium">High API usage detected</p>
-                <p className="text-sm text-muted-foreground">OpenAI provider approaching rate limit</p>
-              </div>
-              <Badge variant="outline">Warning</Badge>
-            </div>
-            
-            <div className="flex items-center space-x-3 p-3 rounded-lg border border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20">
-              <CheckCircle className="h-4 w-4 text-green-600" />
-              <div className="flex-1">
-                <p className="text-sm font-medium">Backup completed successfully</p>
-                <p className="text-sm text-muted-foreground">All data backed up to secure storage</p>
-              </div>
-              <Badge variant="outline">Success</Badge>
-            </div>
-            
-            <div className="flex items-center space-x-3 p-3 rounded-lg border">
-              <Activity className="h-4 w-4 text-blue-600" />
-              <div className="flex-1">
-                <p className="text-sm font-medium">System maintenance scheduled</p>
-                <p className="text-sm text-muted-foreground">Planned downtime: Tomorrow 2:00 AM - 4:00 AM UTC</p>
-              </div>
-              <Badge variant="outline">Info</Badge>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

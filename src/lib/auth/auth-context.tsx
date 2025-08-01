@@ -1,371 +1,208 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { User, Organization, Permission, AuthContext, UserRole } from './types';
+import { useRouter } from 'next/navigation';
 import { authService } from './auth-service';
-import { sessionManager } from './session-manager';
+import { 
+  AuthState, 
+  User, 
+  Organization, 
+  Permission, 
+  LoginCredentials, 
+  RegisterData,
+  PasswordResetRequest,
+  PasswordReset,
+  TwoFactorVerification
+} from './types';
 
-const AuthContextProvider = createContext<AuthContext | null>(null);
-
-interface AuthProviderProps {
-  children: React.ReactNode;
+interface AuthContextType extends AuthState {
+  login: (credentials: LoginCredentials) => Promise<void>;
+  register: (data: RegisterData) => Promise<void>;
+  logout: () => Promise<void>;
+  refreshAuth: () => Promise<void>;
+  requestPasswordReset: (data: PasswordResetRequest) => Promise<void>;
+  resetPassword: (data: PasswordReset) => Promise<void>;
+  verifyTwoFactor: (data: TwoFactorVerification) => Promise<void>;
+  updateProfile: (data: Partial<User>) => Promise<void>;
+  hasPermission: (permission: Permission) => boolean;
+  hasAnyPermission: (permissions: Permission[]) => boolean;
+  switchOrganization: (organizationId: string) => Promise<void>;
 }
 
-export function AuthProvider({ children }: AuthProviderProps) {
-  const [user, setUser] = useState<User | null>(null);
-  const [organization, setOrganization] = useState<Organization | null>(null);
-  const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-  const updateAuthState = useCallback((userData: User | null, orgData: Organization | null) => {
-    setUser(userData);
-    setOrganization(orgData);
-    
-    if (userData) {
-      const userPermissions = authService.getUserPermissions(userData.role, userData.permissions);
-      setPermissions(userPermissions);
-      setIsAuthenticated(true);
-    } else {
-      setPermissions([]);
-      setIsAuthenticated(false);
-    }
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [state, setState] = useState<AuthState>({
+    user: null,
+    organization: null,
+    isAuthenticated: false,
+    isLoading: true,
+    permissions: [],
+  });
+
+  const router = useRouter();
+
+  const updateAuthState = useCallback((
+    user: User | null, 
+    organization: Organization | null
+  ) => {
+    const permissions = user?.permissions || [];
+    setState({
+      user,
+      organization,
+      isAuthenticated: !!user,
+      isLoading: false,
+      permissions,
+    });
   }, []);
 
-  const login = useCallback(async (email: string, password: string, twoFactorCode?: string) => {
+  const refreshAuth = useCallback(async () => {
     try {
-      setIsLoading(true);
-      
-      // Get client IP and user agent
-      const ipAddress = await fetch('/api/auth/client-info')
-        .then(res => res.json())
-        .then(data => data.ip)
-        .catch(() => '127.0.0.1');
-      
-      const userAgent = navigator.userAgent;
-
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email,
-          password,
-          twoFactorCode,
-          ipAddress,
-          userAgent
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Login failed');
+      if (!authService.isAuthenticated()) {
+        updateAuthState(null, null);
+        return;
       }
 
-      const { user: userData, organization: orgData, accessToken, refreshToken } = await response.json();
-
-      // Store tokens
-      localStorage.setItem('accessToken', accessToken);
-      localStorage.setItem('refreshToken', refreshToken);
-
-      updateAuthState(userData, orgData);
-
-      // Log successful login
-      await authService.logSecurityEvent({
-        userId: userData.id,
-        organizationId: userData.organizationId,
-        action: 'LOGIN',
-        resource: 'USER',
-        details: { email, twoFactorUsed: !!twoFactorCode },
-        ipAddress,
-        userAgent,
-        success: true
-      });
-
+      const { user, organization } = await authService.getCurrentUser();
+      updateAuthState(user, organization);
     } catch (error) {
-      console.error('Login error:', error);
-      
-      // Log failed login attempt
-      await authService.logSecurityEvent({
-        action: 'LOGIN_FAILED',
-        resource: 'USER',
-        details: { email, error: (error as Error).message },
-        ipAddress: await fetch('/api/auth/client-info').then(res => res.json()).then(data => data.ip).catch(() => '127.0.0.1'),
-        userAgent: navigator.userAgent,
-        success: false
-      });
-      
-      throw error;
-    } finally {
-      setIsLoading(false);
+      console.error('Failed to refresh auth:', error);
+      updateAuthState(null, null);
     }
   }, [updateAuthState]);
+
+  const login = useCallback(async (credentials: LoginCredentials) => {
+    try {
+      setState(prev => ({ ...prev, isLoading: true }));
+      const response = await authService.login(credentials);
+      updateAuthState(response.user, response.organization);
+      router.push('/');
+    } catch (error) {
+      setState(prev => ({ ...prev, isLoading: false }));
+      throw error;
+    }
+  }, [updateAuthState, router]);
+
+  const register = useCallback(async (data: RegisterData) => {
+    try {
+      setState(prev => ({ ...prev, isLoading: true }));
+      const response = await authService.register(data);
+      updateAuthState(response.user, response.organization);
+      router.push('/');
+    } catch (error) {
+      setState(prev => ({ ...prev, isLoading: false }));
+      throw error;
+    }
+  }, [updateAuthState, router]);
 
   const logout = useCallback(async () => {
     try {
-      const accessToken = localStorage.getItem('accessToken');
-      
-      if (accessToken) {
-        const payload = await authService.verifyJWT(accessToken);
-        if (payload) {
-          await authService.invalidateSession(payload.sessionId);
-          
-          // Log logout
-          await authService.logSecurityEvent({
-            userId: payload.sub,
-            organizationId: payload.organizationId,
-            action: 'LOGOUT',
-            resource: 'USER',
-            details: {},
-            ipAddress: await fetch('/api/auth/client-info').then(res => res.json()).then(data => data.ip).catch(() => '127.0.0.1'),
-            userAgent: navigator.userAgent,
-            success: true
-          });
-        }
-      }
-
-      // Clear tokens
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
-
+      await authService.logout();
       updateAuthState(null, null);
+      router.push('/auth/login');
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error('Logout failed:', error);
+      updateAuthState(null, null);
+      router.push('/auth/login');
     }
-  }, [updateAuthState]);
+  }, [updateAuthState, router]);
 
-  const refreshToken = useCallback(async () => {
+  const requestPasswordReset = useCallback(async (data: PasswordResetRequest) => {
+    await authService.requestPasswordReset(data);
+  }, []);
+
+  const resetPassword = useCallback(async (data: PasswordReset) => {
+    await authService.resetPassword(data);
+    router.push('/auth/login');
+  }, [router]);
+
+  const verifyTwoFactor = useCallback(async (data: TwoFactorVerification) => {
     try {
-      const refreshTokenValue = localStorage.getItem('refreshToken');
-      
-      if (!refreshTokenValue) {
-        throw new Error('No refresh token available');
-      }
-
-      const response = await fetch('/api/auth/refresh', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ refreshToken: refreshTokenValue }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Token refresh failed');
-      }
-
-      const { accessToken: newAccessToken, refreshToken: newRefreshToken } = await response.json();
-
-      localStorage.setItem('accessToken', newAccessToken);
-      localStorage.setItem('refreshToken', newRefreshToken);
-
-      // Verify the new token and update state
-      const payload = await authService.verifyJWT(newAccessToken);
-      if (payload) {
-        // Fetch updated user and organization data
-        const userResponse = await fetch('/api/auth/me', {
-          headers: {
-            'Authorization': `Bearer ${newAccessToken}`,
-          },
-        });
-
-        if (userResponse.ok) {
-          const { user: userData, organization: orgData } = await userResponse.json();
-          updateAuthState(userData, orgData);
-        }
-      }
+      setState(prev => ({ ...prev, isLoading: true }));
+      const response = await authService.verifyTwoFactor(data);
+      updateAuthState(response.user, response.organization);
+      router.push('/');
     } catch (error) {
-      console.error('Token refresh error:', error);
-      await logout();
+      setState(prev => ({ ...prev, isLoading: false }));
+      throw error;
     }
-  }, [updateAuthState, logout]);
+  }, [updateAuthState, router]);
+
+  const updateProfile = useCallback(async (data: Partial<User>) => {
+    const updatedUser = await authService.updateProfile(data);
+    setState(prev => ({
+      ...prev,
+      user: updatedUser,
+    }));
+  }, []);
 
   const hasPermission = useCallback((permission: Permission): boolean => {
-    return authService.hasPermission(permissions, permission);
-  }, [permissions]);
+    return state.permissions.includes(permission);
+  }, [state.permissions]);
 
-  const hasAnyPermission = useCallback((requiredPermissions: Permission[]): boolean => {
-    return authService.hasAnyPermission(permissions, requiredPermissions);
-  }, [permissions]);
+  const hasAnyPermission = useCallback((permissions: Permission[]): boolean => {
+    return permissions.some(permission => state.permissions.includes(permission));
+  }, [state.permissions]);
 
   const switchOrganization = useCallback(async (organizationId: string) => {
     try {
-      setIsLoading(true);
-      
-      const accessToken = localStorage.getItem('accessToken');
-      if (!accessToken) {
-        throw new Error('No access token available');
-      }
-
-      const response = await fetch('/api/auth/switch-organization', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ organizationId }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Organization switch failed');
-      }
-
-      const { user: userData, organization: orgData, accessToken: newAccessToken } = await response.json();
-
-      localStorage.setItem('accessToken', newAccessToken);
-      updateAuthState(userData, orgData);
-
+      setState(prev => ({ ...prev, isLoading: true }));
+      // This would be implemented when multi-org switching is needed
+      await refreshAuth();
     } catch (error) {
-      console.error('Organization switch error:', error);
+      console.error('Failed to switch organization:', error);
+      setState(prev => ({ ...prev, isLoading: false }));
       throw error;
-    } finally {
-      setIsLoading(false);
     }
-  }, [updateAuthState]);
+  }, [refreshAuth]);
 
   // Initialize auth state on mount
   useEffect(() => {
-    const initializeAuth = async () => {
-      try {
-        const accessToken = localStorage.getItem('accessToken');
-        
-        if (!accessToken) {
-          setIsLoading(false);
-          return;
-        }
-
-        const validation = await authService.validateSession(accessToken);
-        
-        if (!validation.isValid) {
-          // Try to refresh the token
-          await refreshToken();
-          return;
-        }
-
-        // Fetch current user and organization data
-        const response = await fetch('/api/auth/me', {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-          },
-        });
-
-        if (response.ok) {
-          const { user: userData, organization: orgData } = await response.json();
-          updateAuthState(userData, orgData);
-        } else {
-          await logout();
-        }
-      } catch (error) {
-        console.error('Auth initialization error:', error);
-        await logout();
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    initializeAuth();
-  }, [refreshToken, logout, updateAuthState]);
+    refreshAuth();
+  }, [refreshAuth]);
 
   // Set up token refresh interval
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!state.isAuthenticated) return;
 
     const interval = setInterval(async () => {
-      const accessToken = localStorage.getItem('accessToken');
-      if (accessToken) {
-        const payload = await authService.verifyJWT(accessToken);
-        if (payload) {
-          const expiresIn = payload.exp - Math.floor(Date.now() / 1000);
-          // Refresh token if it expires in less than 5 minutes
-          if (expiresIn < 300) {
-            await refreshToken();
-          }
-        }
+      try {
+        await authService.refreshToken();
+      } catch (error) {
+        console.error('Token refresh failed:', error);
+        logout();
       }
-    }, 60000); // Check every minute
+    }, 15 * 60 * 1000); // Refresh every 15 minutes
 
     return () => clearInterval(interval);
-  }, [isAuthenticated, refreshToken]);
+  }, [state.isAuthenticated, logout]);
 
-  const contextValue: AuthContext = {
-    user,
-    organization,
-    permissions,
-    isAuthenticated,
-    isLoading,
+  const contextValue: AuthContextType = {
+    ...state,
     login,
+    register,
     logout,
-    refreshToken,
+    refreshAuth,
+    requestPasswordReset,
+    resetPassword,
+    verifyTwoFactor,
+    updateProfile,
     hasPermission,
     hasAnyPermission,
     switchOrganization,
   };
 
   return (
-    <AuthContextProvider.Provider value={contextValue}>
+    <AuthContext.Provider value={contextValue}>
       {children}
-    </AuthContextProvider.Provider>
+    </AuthContext.Provider>
   );
 }
 
-export function useAuth(): AuthContext {
-  const context = useContext(AuthContextProvider);
-  if (!context) {
+export function useAuth(): AuthContextType {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
-}
-
-// Higher-order component for protected routes
-export function withAuth<P extends object>(
-  Component: React.ComponentType<P>,
-  requiredPermissions?: Permission[]
-) {
-  return function AuthenticatedComponent(props: P) {
-    const { isAuthenticated, isLoading, hasAnyPermission } = useAuth();
-
-    if (isLoading) {
-      return (
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
-        </div>
-      );
-    }
-
-    if (!isAuthenticated) {
-      // Redirect to login
-      if (typeof window !== 'undefined') {
-        window.location.href = '/auth/login';
-      }
-      return null;
-    }
-
-    if (requiredPermissions && !hasAnyPermission(requiredPermissions)) {
-      return (
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="text-center">
-            <h1 className="text-2xl font-bold text-destructive mb-4">Access Denied</h1>
-            <p className="text-muted-foreground">You don't have permission to access this resource.</p>
-          </div>
-        </div>
-      );
-    }
-
-    return <Component {...props} />;
-  };
-}
-
-// Hook for permission-based rendering
-export function usePermissions() {
-  const { permissions, hasPermission, hasAnyPermission } = useAuth();
-  
-  return {
-    permissions,
-    hasPermission,
-    hasAnyPermission,
-    can: hasPermission,
-    canAny: hasAnyPermission,
-  };
 }
