@@ -4,17 +4,20 @@
  * This file provides a React context provider for the APIX client.
  */
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { apixClient, ApixClient } from './client';
-import { ConnectionOptions, ConnectionStatus } from './types';
+import { ConnectionOptions, ConnectionStatus, ApixMetrics, ApixEvent, ApixChannel } from './types';
 
 // Context type
 interface ApixContextType {
   client: ApixClient;
   status: ConnectionStatus;
-  connect: () => Promise<void>;
+  connect: (token?: string, organizationId?: string) => Promise<void>;
   disconnect: () => void;
   isConnected: boolean;
+  metrics: ApixMetrics | null;
+  connectionInfo: any;
+  latency: number;
 }
 
 // Create context
@@ -25,6 +28,8 @@ interface ApixProviderProps {
   children: React.ReactNode;
   options?: ConnectionOptions;
   autoConnect?: boolean;
+  token?: string;
+  organizationId?: string;
 }
 
 /**
@@ -35,18 +40,14 @@ interface ApixProviderProps {
 export function ApixProvider({
   children,
   options,
-  autoConnect = true
+  autoConnect = false,
+  token,
+  organizationId
 }: ApixProviderProps) {
   const [status, setStatus] = useState<ConnectionStatus>(apixClient.getStatus());
-
-  // Apply options if provided
-  useEffect(() => {
-    if (options) {
-      // In a real implementation, we would apply these options to the client
-      // For now, we'll just log them
-      console.log('APIX options:', options);
-    }
-  }, [options]);
+  const [metrics, setMetrics] = useState<ApixMetrics | null>(null);
+  const [connectionInfo, setConnectionInfo] = useState<any>({});
+  const [latency, setLatency] = useState<number>(0);
 
   // Subscribe to status changes
   useEffect(() => {
@@ -54,26 +55,43 @@ export function ApixProvider({
     return unsubscribe;
   }, []);
 
-  // Auto-connect if enabled
+  // Update connection info and metrics periodically
   useEffect(() => {
-    if (autoConnect && status === 'disconnected') {
-      apixClient.connect().catch(console.error);
-    }
-
-    return () => {
-      // Don't disconnect on unmount, as other components may be using the connection
+    const updateInfo = () => {
+      setConnectionInfo(apixClient.getConnectionInfo());
+      setMetrics(apixClient.getMetrics());
+      setLatency(apixClient.getLatencyScore());
     };
-  }, [autoConnect, status]);
+
+    updateInfo(); // Initial update
+    const interval = setInterval(updateInfo, 5000); // Update every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [status]);
+
+  // Auto-connect if enabled and credentials are provided
+  useEffect(() => {
+    if (autoConnect && status === 'disconnected' && token) {
+      apixClient.connect(token, organizationId).catch(console.error);
+    }
+  }, [autoConnect, status, token, organizationId]);
 
   // Connect function
-  const connect = async () => {
-    await apixClient.connect();
-  };
+  const connect = useCallback(async (authToken?: string, orgId?: string) => {
+    const finalToken = authToken || token;
+    const finalOrgId = orgId || organizationId;
+    
+    if (!finalToken) {
+      throw new Error('Authentication token is required');
+    }
+    
+    await apixClient.connect(finalToken, finalOrgId);
+  }, [token, organizationId]);
 
   // Disconnect function
-  const disconnect = () => {
+  const disconnect = useCallback(() => {
     apixClient.disconnect();
-  };
+  }, []);
 
   // Context value
   const contextValue: ApixContextType = {
@@ -81,7 +99,10 @@ export function ApixProvider({
     status,
     connect,
     disconnect,
-    isConnected: status === 'connected'
+    isConnected: status === 'connected',
+    metrics,
+    connectionInfo,
+    latency
   };
 
   return (
@@ -102,4 +123,24 @@ export function useApixContext(): ApixContextType {
   }
   
   return context;
+}
+
+/**
+ * Higher-order component to provide APIX context
+ */
+export function withApix<P extends object>(
+  Component: React.ComponentType<P>,
+  options?: {
+    autoConnect?: boolean;
+    token?: string;
+    organizationId?: string;
+  }
+) {
+  return function ApixWrappedComponent(props: P) {
+    return (
+      <ApixProvider {...options}>
+        <Component {...props} />
+      </ApixProvider>
+    );
+  };
 }

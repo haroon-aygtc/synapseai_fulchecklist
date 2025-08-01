@@ -4,178 +4,233 @@
  * This component provides a UI for publishing APIX events.
  */
 
-import React, { useState } from 'react';
-import { useApixPublish, EventChannel, EventType } from '@/lib/apix';
+import React, { useState, useEffect } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Loader2, Send } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useApixPublish, useApixConnection, APIX_CHANNELS, ApixEventFactory } from '@/lib/apix';
+import { Activity, Send, Zap } from 'lucide-react';
 
 interface ApixEventPublisherProps {
-  defaultChannel?: EventChannel;
-  defaultType?: EventType;
-  sessionId?: string;
   className?: string;
 }
 
-export function ApixEventPublisher({
-  defaultChannel = 'system-events',
-  defaultType = 'state_update',
-  sessionId,
-  className = ''
-}: ApixEventPublisherProps) {
+export default function ApixEventPublisher({ className = '' }: ApixEventPublisherProps) {
+  const { isConnected, status } = useApixConnection();
   const publish = useApixPublish();
-  const [channel, setChannel] = useState<EventChannel>(defaultChannel);
-  const [type, setType] = useState<EventType>(defaultType);
-  const [data, setData] = useState('{}');
-  const [isPublishing, setIsPublishing] = useState(false);
-  const [lastEventId, setLastEventId] = useState<string | null>(null);
+  
+  const [eventType, setEventType] = useState('CUSTOM_EVENT');
+  const [channel, setChannel] = useState(APIX_CHANNELS.CUSTOM);
+  const [eventData, setEventData] = useState('{}');
+  const [priority, setPriority] = useState<'low' | 'normal' | 'high' | 'critical'>('normal');
+  const [publishedEvents, setPublishedEvents] = useState<string[]>([]);
 
-  // Available channels
-  const channels: EventChannel[] = [
-    'agent-events',
-    'tool-events',
-    'workflow-events',
-    'provider-events',
-    'system-events'
-  ];
-
-  // Available event types
-  const eventTypes: EventType[] = [
-    'tool_call_start',
-    'tool_call_result',
-    'tool_call_error',
-    'thinking_status',
-    'text_chunk',
-    'state_update',
-    'request_user_input',
-    'session_start',
-    'session_end',
-    'error_occurred',
-    'fallback_triggered'
-  ];
-
-  // Handle publishing event
-  const handlePublish = () => {
+  const handlePublishEvent = () => {
     try {
-      setIsPublishing(true);
-      
-      // Parse data JSON
-      const parsedData = JSON.parse(data);
-      
-      // Create event
-      const event = {
-        type,
+      let data;
+      try {
+        data = JSON.parse(eventData);
+      } catch {
+        data = { message: eventData };
+      }
+
+      const eventId = publish({
+        type: eventType as any,
         channel,
-        sessionId,
-        data: parsedData
-      };
-      
-      // Publish event
-      const eventId = publish(event);
-      setLastEventId(eventId);
+        data,
+        priority,
+        metadata: {
+          timestamp: new Date(),
+          source: 'event-publisher-component'
+        }
+      });
+
+      setPublishedEvents(prev => [eventId, ...prev.slice(0, 9)]);
       
       // Reset form
-      // setData('{}');
+      setEventData('{}');
     } catch (error) {
       console.error('Failed to publish event:', error);
-      alert(`Failed to publish event: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setIsPublishing(false);
     }
   };
 
+  const handleQuickEvent = (type: 'agent' | 'tool' | 'workflow') => {
+    let event;
+    switch (type) {
+      case 'agent':
+        event = ApixEventFactory.agentMessage(
+          'demo-agent-1',
+          'Hello from the event publisher!',
+          'demo-session-1',
+          { userId: 'demo-user', organizationId: 'demo-org' }
+        );
+        break;
+      case 'tool':
+        event = ApixEventFactory.toolExecuted(
+          'demo-tool-1',
+          { query: 'test input' },
+          { result: 'test output' },
+          150,
+          { userId: 'demo-user', organizationId: 'demo-org' }
+        );
+        break;
+      case 'workflow':
+        event = ApixEventFactory.workflowStarted(
+          'demo-workflow-1',
+          'demo-execution-1',
+          { userId: 'demo-user', organizationId: 'demo-org' }
+        );
+        break;
+    }
+
+    const eventId = publish(event);
+    setPublishedEvents(prev => [eventId, ...prev.slice(0, 9)]);
+  };
+
   return (
-    <Card className={className}>
-      <CardHeader>
-        <CardTitle>Publish Event</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
+    <div className={`bg-white ${className}`}>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Send className="h-5 w-5" />
+            APIX Event Publisher
+          </CardTitle>
+          <CardDescription>
+            Publish events to the APIX system for testing and development
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Connection Status */}
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            <span className="text-sm font-medium">Connection Status:</span>
+            <Badge variant={isConnected ? 'default' : 'destructive'}>
+              {status}
+            </Badge>
+          </div>
+
+          {/* Quick Actions */}
           <div className="space-y-2">
-            <Label htmlFor="channel">Channel</Label>
-            <Select
-              value={channel}
-              onValueChange={(value) => setChannel(value as EventChannel)}
+            <Label className="text-sm font-medium">Quick Events</Label>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handleQuickEvent('agent')}
+                disabled={!isConnected}
+              >
+                Agent Message
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handleQuickEvent('tool')}
+                disabled={!isConnected}
+              >
+                Tool Execution
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handleQuickEvent('workflow')}
+                disabled={!isConnected}
+              >
+                Workflow Start
+              </Button>
+            </div>
+          </div>
+
+          {/* Custom Event Form */}
+          <div className="space-y-4">
+            <Label className="text-sm font-medium">Custom Event</Label>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="event-type">Event Type</Label>
+                <Input
+                  id="event-type"
+                  value={eventType}
+                  onChange={(e) => setEventType(e.target.value)}
+                  placeholder="CUSTOM_EVENT"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="channel">Channel</Label>
+                <Select value={channel} onValueChange={setChannel}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={APIX_CHANNELS.AGENT_EVENTS}>Agent Events</SelectItem>
+                    <SelectItem value={APIX_CHANNELS.TOOL_EVENTS}>Tool Events</SelectItem>
+                    <SelectItem value={APIX_CHANNELS.WORKFLOW_EVENTS}>Workflow Events</SelectItem>
+                    <SelectItem value={APIX_CHANNELS.SYSTEM_EVENTS}>System Events</SelectItem>
+                    <SelectItem value={APIX_CHANNELS.USER_EVENTS}>User Events</SelectItem>
+                    <SelectItem value={APIX_CHANNELS.CUSTOM}>Custom</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="priority">Priority</Label>
+              <Select value={priority} onValueChange={(value: any) => setPriority(value)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="critical">Critical</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="event-data">Event Data (JSON)</Label>
+              <Textarea
+                id="event-data"
+                value={eventData}
+                onChange={(e) => setEventData(e.target.value)}
+                placeholder='{"message": "Hello, APIX!"}'
+                rows={4}
+              />
+            </div>
+
+            <Button
+              onClick={handlePublishEvent}
+              disabled={!isConnected}
+              className="w-full"
             >
-              <SelectTrigger id="channel">
-                <SelectValue placeholder="Select channel" />
-              </SelectTrigger>
-              <SelectContent>
-                {channels.map((ch) => (
-                  <SelectItem key={ch} value={ch}>
-                    {ch}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="type">Event Type</Label>
-            <Select
-              value={type}
-              onValueChange={(value) => setType(value as EventType)}
-            >
-              <SelectTrigger id="type">
-                <SelectValue placeholder="Select event type" />
-              </SelectTrigger>
-              <SelectContent>
-                {eventTypes.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        
-        {sessionId && (
-          <div className="space-y-2">
-            <Label htmlFor="sessionId">Session ID</Label>
-            <Input
-              id="sessionId"
-              value={sessionId}
-              disabled
-            />
-          </div>
-        )}
-        
-        <div className="space-y-2">
-          <Label htmlFor="data">Event Data (JSON)</Label>
-          <Textarea
-            id="data"
-            value={data}
-            onChange={(e) => setData(e.target.value)}
-            rows={10}
-            className="font-mono text-sm"
-          />
-        </div>
-      </CardContent>
-      <CardFooter className="flex justify-between">
-        {lastEventId && (
-          <p className="text-xs text-muted-foreground">
-            Last event ID: {lastEventId}
-          </p>
-        )}
-        <Button onClick={handlePublish} disabled={isPublishing}>
-          {isPublishing ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Publishing...
-            </>
-          ) : (
-            <>
-              <Send className="mr-2 h-4 w-4" />
+              <Zap className="h-4 w-4 mr-2" />
               Publish Event
-            </>
+            </Button>
+          </div>
+
+          {/* Published Events */}
+          {publishedEvents.length > 0 && (
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Recently Published</Label>
+              <div className="space-y-1">
+                {publishedEvents.map((eventId, index) => (
+                  <div
+                    key={eventId}
+                    className="text-xs font-mono bg-gray-50 p-2 rounded border"
+                  >
+                    {eventId}
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
-        </Button>
-      </CardFooter>
-    </Card>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

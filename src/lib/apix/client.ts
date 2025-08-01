@@ -6,27 +6,39 @@ import {
   ApixChannel, 
   ApixEventType,
   ApixConfig,
-  APIX_CHANNELS 
+  APIX_CHANNELS,
+  ConnectionStatus,
+  ConnectionOptions,
+  SubscriptionOptions,
+  EventHandler,
+  ApixClientInterface,
+  ApixMetrics,
+  ApixQueuedMessage
 } from './types';
 
-class ApixClient {
+class ApixClient implements ApixClientInterface {
   private socket: Socket | null = null;
   private subscriptions: Map<string, ApixSubscription> = new Map();
-  private messageQueue: ApixEvent[] = [];
-  private isConnected = false;
+  private messageQueue: ApixQueuedMessage[] = [];
+  private status: ConnectionStatus = 'disconnected';
+  private statusCallbacks: Set<(status: ConnectionStatus) => void> = new Set();
   private reconnectAttempts = 0;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private config: ApixConfig;
   private latencyScores: number[] = [];
   private eventBuffer: ApixEvent[] = [];
+  private currentToken: string | null = null;
+  private currentOrganizationId: string | null = null;
+  private metrics: ApixMetrics | null = null;
+  private streamBuffers: Map<string, ApixEvent[]> = new Map();
 
-  constructor() {
+  constructor(options?: ConnectionOptions) {
     this.config = {
-      heartbeatInterval: 30000, // 30 seconds
-      reconnectInterval: 5000, // 5 seconds
-      maxReconnectAttempts: 10,
-      messageQueueSize: 1000,
-      compressionThreshold: 1024, // 1KB
+      heartbeatInterval: options?.heartbeatInterval || 30000,
+      reconnectInterval: options?.reconnectInterval || 5000,
+      maxReconnectAttempts: options?.maxReconnectAttempts || 10,
+      messageQueueSize: options?.messageQueueSize || 1000,
+      compressionThreshold: options?.compressionThreshold || 1024,
       rateLimits: {
         eventsPerSecond: 100,
         eventsPerMinute: 1000,
@@ -60,22 +72,42 @@ class ApixClient {
         [APIX_CHANNELS.ORGANIZATION_EVENTS]: {
           requiresAuth: true,
           permissions: ['ORG_MANAGE']
+        },
+        [APIX_CHANNELS.STREAMING]: {
+          requiresAuth: true,
+          permissions: ['STREAM_READ']
+        },
+        [APIX_CHANNELS.CUSTOM]: {
+          requiresAuth: false,
+          permissions: []
         }
       }
     };
   }
 
-  async connect(token: string, organizationId: string): Promise<void> {
+  async connect(token?: string, organizationId?: string): Promise<void> {
     if (this.socket?.connected) {
       return;
     }
 
+    // Use provided credentials or stored ones
+    const authToken = token || this.currentToken;
+    const orgId = organizationId || this.currentOrganizationId;
+
+    if (!authToken) {
+      throw new Error('Authentication token is required');
+    }
+
+    this.currentToken = authToken;
+    this.currentOrganizationId = orgId;
+    this.setStatus('connecting');
+
     return new Promise((resolve, reject) => {
       try {
-        this.socket = io(process.env.NEXT_PUBLIC_APIX_URL || 'ws://localhost:3001', {
+        this.socket = io(process.env.NEXT_PUBLIC_APIX_URL || 'ws://localhost:3001/apix', {
           auth: {
-            token,
-            organizationId
+            token: authToken,
+            organizationId: orgId
           },
           transports: ['websocket', 'polling'],
           upgrade: true,
@@ -86,7 +118,7 @@ class ApixClient {
           reconnectionAttempts: this.config.maxReconnectAttempts,
           reconnectionDelay: this.config.reconnectInterval,
           reconnectionDelayMax: 30000,
-          maxHttpBufferSize: 1e6, // 1MB
+          maxHttpBufferSize: 1e6,
           pingTimeout: 60000,
           pingInterval: 25000
         });
@@ -95,31 +127,32 @@ class ApixClient {
 
         this.socket.on('connect', () => {
           console.log('APIX connected');
-          this.isConnected = true;
+          this.setStatus('connected');
           this.reconnectAttempts = 0;
           this.startHeartbeat();
           this.processMessageQueue();
+          this.resubscribeAll();
           resolve();
         });
 
         this.socket.on('connect_error', (error) => {
           console.error('APIX connection error:', error);
-          this.isConnected = false;
+          this.setStatus('error');
           reject(error);
         });
 
         this.socket.on('disconnect', (reason) => {
           console.log('APIX disconnected:', reason);
-          this.isConnected = false;
+          this.setStatus('disconnected');
           this.stopHeartbeat();
           
           if (reason === 'io server disconnect') {
-            // Server initiated disconnect, try to reconnect
             this.reconnect();
           }
         });
 
       } catch (error) {
+        this.setStatus('error');
         reject(error);
       }
     });
@@ -138,6 +171,11 @@ class ApixClient {
       this.handleStreamingData(data);
     });
 
+    // Handle stream chunks
+    this.socket.on('stream_chunk', (chunk: any) => {
+      this.handleStreamChunk(chunk);
+    });
+
     // Handle latency measurements
     this.socket.on('pong', (timestamp: number) => {
       const latency = Date.now() - timestamp;
@@ -153,6 +191,20 @@ class ApixClient {
       console.log(`Left room: ${roomId}`);
     });
 
+    // Handle connection events
+    this.socket.on('connected', (data: any) => {
+      console.log('APIX connection established:', data);
+    });
+
+    // Handle subscription confirmations
+    this.socket.on('subscribed', (data: { subscriptionId: string }) => {
+      console.log(`Subscription confirmed: ${data.subscriptionId}`);
+    });
+
+    this.socket.on('unsubscribed', (data: { subscriptionId: string }) => {
+      console.log(`Unsubscription confirmed: ${data.subscriptionId}`);
+    });
+
     // Handle errors
     this.socket.on('error', (error: any) => {
       console.error('APIX error:', error);
@@ -162,11 +214,24 @@ class ApixClient {
     this.socket.on('rate_limited', (info: any) => {
       console.warn('Rate limited:', info);
     });
+
+    // Handle metrics updates
+    this.socket.on('metrics', (metrics: ApixMetrics) => {
+      this.metrics = metrics;
+    });
   }
 
   private handleIncomingEvent(event: ApixEvent): void {
-    // Update event metadata
-    event.metadata.timestamp = new Date(event.metadata.timestamp);
+    // Ensure timestamp is a Date object
+    if (typeof event.metadata.timestamp === 'string') {
+      event.metadata.timestamp = new Date(event.metadata.timestamp);
+    }
+
+    // Handle streaming events
+    if (event.streamId) {
+      this.handleStreamEvent(event);
+      return;
+    }
 
     // Find matching subscriptions
     const matchingSubscriptions = Array.from(this.subscriptions.values())
@@ -178,6 +243,7 @@ class ApixClient {
         try {
           subscription.callback(event);
           subscription.lastEventAt = new Date();
+          subscription.eventCount = (subscription.eventCount || 0) + 1;
         } catch (error) {
           console.error('Error in subscription callback:', error);
         }
@@ -188,8 +254,57 @@ class ApixClient {
     this.bufferEvent(event);
   }
 
+  private handleStreamEvent(event: ApixEvent): void {
+    if (!event.streamId) return;
+
+    // Get or create stream buffer
+    let streamBuffer = this.streamBuffers.get(event.streamId);
+    if (!streamBuffer) {
+      streamBuffer = [];
+      this.streamBuffers.set(event.streamId, streamBuffer);
+    }
+
+    // Add chunk to buffer
+    streamBuffer.push(event);
+
+    // If this is the end of the stream, process it
+    if (event.isStreamEnd || (event.chunkIndex !== undefined && event.totalChunks !== undefined && event.chunkIndex === event.totalChunks - 1)) {
+      this.processStreamBuffer(event.streamId, streamBuffer);
+      this.streamBuffers.delete(event.streamId);
+    }
+
+    // Also handle individual chunks
+    this.handleIncomingEvent(event);
+  }
+
+  private processStreamBuffer(streamId: string, chunks: ApixEvent[]): void {
+    // Sort chunks by index if available
+    if (chunks.length > 0 && chunks[0].chunkIndex !== undefined) {
+      chunks.sort((a, b) => (a.chunkIndex || 0) - (b.chunkIndex || 0));
+    }
+
+    // Combine data from all chunks
+    const combinedData = chunks.map(chunk => chunk.data);
+
+    // Create a combined event
+    const combinedEvent: ApixEvent = {
+      ...chunks[0],
+      id: `stream_combined_${streamId}`,
+      type: 'STREAM_COMPLETED',
+      data: combinedData,
+      metadata: {
+        ...chunks[0].metadata,
+        timestamp: new Date(),
+        streamId,
+        totalChunks: chunks.length
+      }
+    };
+
+    // Handle the combined event
+    this.handleIncomingEvent(combinedEvent);
+  }
+
   private handleStreamingData(data: any): void {
-    // Handle streaming responses from agents/tools
     const event: ApixEvent = {
       id: `stream_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       type: 'STREAM_DATA',
@@ -206,14 +321,37 @@ class ApixClient {
     this.handleIncomingEvent(event);
   }
 
+  private handleStreamChunk(chunk: any): void {
+    const event: ApixEvent = {
+      id: `chunk_${chunk.streamId}_${chunk.chunkIndex}`,
+      type: 'STREAM_CHUNK',
+      channel: 'streaming',
+      data: chunk.data,
+      metadata: {
+        timestamp: new Date(),
+        source: 'apix-client',
+        version: '1.0.0'
+      },
+      priority: 'normal',
+      streamId: chunk.streamId,
+      chunkIndex: chunk.chunkIndex,
+      totalChunks: chunk.totalChunks,
+      isStreamEnd: chunk.isComplete
+    };
+
+    this.handleIncomingEvent(event);
+  }
+
   private eventMatchesFilters(event: ApixEvent, filters?: Record<string, any>): boolean {
     if (!filters) return true;
 
     for (const [key, value] of Object.entries(filters)) {
       if (key === 'type' && event.type !== value) return false;
+      if (key === 'eventType' && event.type !== value) return false;
       if (key === 'userId' && event.metadata.userId !== value) return false;
       if (key === 'organizationId' && event.metadata.organizationId !== value) return false;
       if (key === 'sessionId' && event.metadata.sessionId !== value) return false;
+      if (key === 'priority' && event.priority !== value) return false;
       
       // Support nested property filtering
       if (key.includes('.')) {
@@ -238,22 +376,22 @@ class ApixClient {
     }
   }
 
-  async subscribe(
-    channel: ApixChannel, 
-    callback: (event: ApixEvent) => void,
-    filters?: Record<string, any>
-  ): Promise<string> {
+  subscribe<T extends ApixEvent>(
+    handler: EventHandler<T>,
+    options: SubscriptionOptions = {}
+  ): () => void {
     const subscriptionId = `sub_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     const subscription: ApixSubscription = {
       id: subscriptionId,
-      channel,
+      channel: options.channel || APIX_CHANNELS.CUSTOM,
       userId: '', // Would be set from auth context
-      organizationId: '', // Would be set from auth context
-      filters,
-      callback,
+      organizationId: this.currentOrganizationId || '',
+      filters: options.filters,
+      callback: handler as (event: ApixEvent) => void,
       isActive: true,
-      createdAt: new Date()
+      createdAt: new Date(),
+      eventCount: 0
     };
 
     this.subscriptions.set(subscriptionId, subscription);
@@ -262,15 +400,18 @@ class ApixClient {
     if (this.socket?.connected) {
       this.socket.emit('subscribe', {
         subscriptionId,
-        channel,
-        filters
+        channel: subscription.channel,
+        filters: subscription.filters
       });
     }
 
-    return subscriptionId;
+    // Return unsubscribe function
+    return () => {
+      this.unsubscribe(subscriptionId);
+    };
   }
 
-  async unsubscribe(subscriptionId: string): Promise<void> {
+  private async unsubscribe(subscriptionId: string): Promise<void> {
     const subscription = this.subscriptions.get(subscriptionId);
     if (!subscription) return;
 
@@ -283,62 +424,37 @@ class ApixClient {
     }
   }
 
-  async emit(channel: ApixChannel, data: any, options?: {
-    priority?: 'low' | 'normal' | 'high' | 'critical';
-    ttl?: number;
-    retryCount?: number;
-    compress?: boolean;
-  }): Promise<void> {
-    const event: ApixEvent = {
+  publish<T extends ApixEvent>(
+    event: Partial<T> & { type: T['type']; channel: T['channel'] }
+  ): string {
+    const fullEvent: ApixEvent = {
       id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      type: data.type || 'CUSTOM_EVENT',
-      channel,
-      data,
+      type: event.type,
+      channel: event.channel,
+      data: event.data || {},
       metadata: {
         timestamp: new Date(),
-        userId: data.userId,
-        organizationId: data.organizationId,
-        sessionId: data.sessionId,
+        userId: event.metadata?.userId,
+        organizationId: this.currentOrganizationId || '',
+        sessionId: event.metadata?.sessionId,
         source: 'apix-client',
-        version: '1.0.0'
+        version: '1.0.0',
+        ...event.metadata
       },
-      priority: options?.priority || 'normal',
-      ttl: options?.ttl,
-      retryCount: options?.retryCount || 0,
-      maxRetries: 3
+      priority: event.priority || 'normal',
+      ttl: event.ttl,
+      retryCount: event.retryCount || 0,
+      maxRetries: event.maxRetries || 3
     };
 
     if (this.socket?.connected) {
-      // Check if compression is needed
-      const eventSize = JSON.stringify(event).length;
-      const shouldCompress = options?.compress || eventSize > this.config.compressionThreshold;
-
-      this.socket.emit('event', event, { compress: shouldCompress });
+      this.socket.emit('event', fullEvent);
     } else {
       // Queue message for later delivery
-      this.queueMessage(event);
-    }
-  }
-
-  async broadcast(channel: ApixChannel, data: any, roomId?: string): Promise<void> {
-    if (!this.socket?.connected) {
-      throw new Error('Not connected to APIX server');
+      this.queueMessage(fullEvent);
     }
 
-    const event: ApixEvent = {
-      id: `broadcast_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      type: data.type || 'BROADCAST',
-      channel,
-      data,
-      metadata: {
-        timestamp: new Date(),
-        source: 'apix-client',
-        version: '1.0.0'
-      },
-      priority: 'normal'
-    };
-
-    this.socket.emit('broadcast', { event, roomId });
+    return fullEvent.id;
   }
 
   async joinRoom(roomId: string): Promise<void> {
@@ -358,7 +474,15 @@ class ApixClient {
   }
 
   private queueMessage(event: ApixEvent): void {
-    this.messageQueue.push(event);
+    const queuedMessage: ApixQueuedMessage = {
+      event,
+      attempts: 0,
+      maxAttempts: event.maxRetries || 3,
+      nextRetryAt: new Date(),
+      createdAt: new Date()
+    };
+
+    this.messageQueue.push(queuedMessage);
     
     // Limit queue size
     if (this.messageQueue.length > this.config.messageQueueSize) {
@@ -371,16 +495,45 @@ class ApixClient {
       return;
     }
 
-    const messages = [...this.messageQueue];
-    this.messageQueue = [];
-
-    for (const message of messages) {
+    const now = new Date();
+    const messagesToProcess = this.messageQueue.filter(msg => msg.nextRetryAt <= now);
+    
+    for (const queuedMessage of messagesToProcess) {
       try {
-        this.socket.emit('event', message);
+        this.socket.emit('event', queuedMessage.event);
+        
+        // Remove from queue on success
+        const index = this.messageQueue.indexOf(queuedMessage);
+        if (index > -1) {
+          this.messageQueue.splice(index, 1);
+        }
       } catch (error) {
         console.error('Error processing queued message:', error);
-        // Re-queue failed messages
-        this.messageQueue.push(message);
+        
+        queuedMessage.attempts++;
+        
+        if (queuedMessage.attempts >= queuedMessage.maxAttempts) {
+          // Remove failed message
+          const index = this.messageQueue.indexOf(queuedMessage);
+          if (index > -1) {
+            this.messageQueue.splice(index, 1);
+          }
+        } else {
+          // Schedule retry with exponential backoff
+          queuedMessage.nextRetryAt = new Date(now.getTime() + Math.pow(2, queuedMessage.attempts) * 1000);
+        }
+      }
+    }
+  }
+
+  private resubscribeAll(): void {
+    for (const subscription of this.subscriptions.values()) {
+      if (subscription.isActive && this.socket?.connected) {
+        this.socket.emit('subscribe', {
+          subscriptionId: subscription.id,
+          channel: subscription.channel,
+          filters: subscription.filters
+        });
       }
     }
   }
@@ -415,37 +568,68 @@ class ApixClient {
   private async reconnect(): Promise<void> {
     if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
       console.error('Max reconnection attempts reached');
+      this.setStatus('error');
       return;
     }
 
     this.reconnectAttempts++;
+    this.setStatus('reconnecting');
+    
+    const delay = this.config.reconnectInterval * Math.pow(2, this.reconnectAttempts - 1);
     
     setTimeout(() => {
-      if (!this.socket?.connected) {
+      if (!this.socket?.connected && this.currentToken) {
         console.log(`Reconnection attempt ${this.reconnectAttempts}`);
-        this.socket?.connect();
+        this.connect(this.currentToken, this.currentOrganizationId).catch(console.error);
       }
-    }, this.config.reconnectInterval * Math.pow(2, this.reconnectAttempts - 1)); // Exponential backoff
+    }, delay);
   }
 
-  // Utility methods
+  private setStatus(status: ConnectionStatus): void {
+    if (this.status !== status) {
+      this.status = status;
+      this.statusCallbacks.forEach(callback => {
+        try {
+          callback(status);
+        } catch (error) {
+          console.error('Error in status callback:', error);
+        }
+      });
+    }
+  }
+
+  // Public utility methods
+  getStatus(): ConnectionStatus {
+    return this.status;
+  }
+
+  onStatusChange(callback: (status: ConnectionStatus) => void): () => void {
+    this.statusCallbacks.add(callback);
+    
+    return () => {
+      this.statusCallbacks.delete(callback);
+    };
+  }
+
   getLatencyScore(): number {
     if (this.latencyScores.length === 0) return 0;
     return this.latencyScores.reduce((a, b) => a + b, 0) / this.latencyScores.length;
   }
 
   isConnectedToServer(): boolean {
-    return this.isConnected && this.socket?.connected === true;
+    return this.status === 'connected' && this.socket?.connected === true;
   }
 
   getConnectionInfo(): any {
     return {
-      isConnected: this.isConnected,
+      status: this.status,
+      isConnected: this.isConnectedToServer(),
       reconnectAttempts: this.reconnectAttempts,
       subscriptions: this.subscriptions.size,
       queuedMessages: this.messageQueue.length,
       averageLatency: this.getLatencyScore(),
-      socketId: this.socket?.id
+      socketId: this.socket?.id,
+      organizationId: this.currentOrganizationId
     };
   }
 
@@ -457,6 +641,10 @@ class ApixClient {
     }
     
     return events.slice(-limit);
+  }
+
+  getMetrics(): ApixMetrics | null {
+    return this.metrics;
   }
 
   async disconnect(): Promise<void> {
@@ -472,11 +660,15 @@ class ApixClient {
       this.socket = null;
     }
 
-    this.isConnected = false;
+    this.setStatus('disconnected');
     this.messageQueue = [];
     this.eventBuffer = [];
     this.latencyScores = [];
+    this.streamBuffers.clear();
+    this.metrics = null;
+    this.reconnectAttempts = 0;
   }
 }
 
 export const apixClient = new ApixClient();
+export { ApixClient };

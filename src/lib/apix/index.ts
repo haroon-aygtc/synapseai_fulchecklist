@@ -1,28 +1,30 @@
 /**
- * APIX Protocol - Main Export
+ * APIX Protocol - Main Export File
  * 
  * This file exports all APIX functionality for easy importing.
  */
 
-// Export types
-export * from './types';
-
-// Export client
-export { ApixClient, apixClient } from './client';
-
-// Export context
+// Re-export commonly used items for convenience
+export { apixClient } from './client';
 export { ApixProvider, useApixContext } from './context';
-
-// Export hooks
-export {
+export { 
   useApixClient,
-  useApixConnection,
   useApixEvents,
+  useLatestApixEvent,
   useApixPublish,
-  useApixRoom,
   useApixStatus,
-  useApixSubscriptionOptions,
-  useLatestApixEvent
+  useApixConnection,
+  useApixRoom,
+  useAgentEvents,
+  useToolEvents,
+  useWorkflowEvents,
+  useSystemEvents,
+  useStreamingEvents,
+  useApixMetrics,
+  useApixConnectionInfo,
+  useApixStream,
+  useApixBroadcast,
+  useApixCollaboration
 } from './hooks';
 
 // Export event utilities

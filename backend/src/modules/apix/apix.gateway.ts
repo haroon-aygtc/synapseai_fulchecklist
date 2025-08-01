@@ -15,7 +15,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ApixService } from './apix.service';
 import { RedisService } from '../../common/redis/redis.service';
 import { WsJwtGuard } from './guards/ws-jwt.guard';
-import { ApixEvent, ApixConnection, ApixSubscription } from './interfaces/apix.interfaces';
+import { ApixEvent, ApixConnection, ApixSubscription, ApixChannel, ApixEventType } from './interfaces/apix.interfaces';
 
 @WebSocketGateway({
   cors: {

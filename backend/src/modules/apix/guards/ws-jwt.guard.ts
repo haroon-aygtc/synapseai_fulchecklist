@@ -7,7 +7,7 @@ import { Socket } from 'socket.io';
 export class WsJwtGuard implements CanActivate {
   constructor(private readonly jwtService: JwtService) {}
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  canActivate(context: ExecutionContext): boolean {
     try {
       const client: Socket = context.switchToWs().getClient();
       const token = client.handshake.auth.token;
@@ -18,11 +18,14 @@ export class WsJwtGuard implements CanActivate {
 
       const payload = this.jwtService.verify(token);
       
-      // Attach user and organization to socket
-      client.data.user = payload;
-      client.data.userId = payload.sub;
-      client.data.organizationId = payload.organizationId;
-      
+      // Attach user info to client for later use
+      client.data.user = {
+        id: payload.sub,
+        organizationId: payload.organizationId,
+        roles: payload.roles || [],
+        permissions: payload.permissions || []
+      };
+
       return true;
     } catch (error) {
       throw new WsException('Invalid authentication token');
