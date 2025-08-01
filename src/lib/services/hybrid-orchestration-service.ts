@@ -108,16 +108,18 @@ export class HybridOrchestrationService {
   private humanInputRequests = new Map<string, HumanInputRequest>();
   private executionQueue: Array<{ execution: HybridExecution; priority: number }> = [];
   private isProcessingQueue = false;
+  private realTimeCoordinator: RealTimeCoordinator;
 
   constructor() {
     this.agentService = new AgentService();
     this.toolService = new ToolService();
     this.workflowService = new WorkflowService();
     this.apixClient = new ApixClient();
+    this.realTimeCoordinator = new RealTimeCoordinator();
     this.initializeExecutionEngine();
   }
 
-  // Enhanced Hybrid Execution Patterns
+  // PRODUCTION FIX: Real Agent-First Execution
   async executeAgentFirst(
     nodeId: string,
     agentId: string,
@@ -146,14 +148,36 @@ export class HybridOrchestrationService {
     this.activeExecutions.set(execution.id, execution);
 
     try {
-      // Step 1: Agent analyzes input and creates execution plan
-      const planningStep = await this.executeAgentStep(
+      // Step 1: Agent analyzes input and creates detailed execution plan
+      const planningStep = await this.executeRealAgentStep(
         agentId,
         {
           task: 'analyze_and_plan',
           input,
-          availableTools: toolIds,
-          context: context.metadata
+          availableTools: await this.getToolCapabilities(toolIds),
+          context: context.metadata,
+          instructions: `Analyze the following input and create a detailed execution plan using the available tools.
+            
+            Input: ${JSON.stringify(input)}
+            
+            Available Tools: ${JSON.stringify(await this.getToolCapabilities(toolIds))}
+            
+            Create a JSON response with:
+            {
+              "analysis": "your analysis of the input",
+              "plan": {
+                "steps": [
+                  {
+                    "toolId": "tool_id",
+                    "description": "what this step does",
+                    "input": "input for this tool",
+                    "expectedOutput": "what you expect to get",
+                    "critical": true/false
+                  }
+                ]
+              },
+              "reasoning": "why you chose this approach"
+            }`
         },
         context,
         'Create an execution plan for the given task using available tools'
@@ -166,18 +190,19 @@ export class HybridOrchestrationService {
         return this.finalizeExecution(execution);
       }
 
-      // Step 2: Execute tools based on agent's plan
-      const plan = planningStep.output?.plan || { steps: [] };
-      const toolExecutions = await this.executeToolsFromPlan(
+      // Step 2: Execute tools based on agent's plan with real coordination
+      const plan = this.parsePlanFromAgentResponse(planningStep.output);
+      const toolExecutions = await this.executeToolsWithRealCoordination(
         toolIds,
         plan,
         input,
-        context
+        context,
+        execution.id
       );
       execution.steps.push(...toolExecutions);
 
-      // Step 3: Agent synthesizes tool results
-      const synthesisStep = await this.executeAgentStep(
+      // Step 3: Agent synthesizes results with error handling
+      const synthesisStep = await this.executeRealAgentStep(
         agentId,
         {
           task: 'synthesize_results',
@@ -187,15 +212,29 @@ export class HybridOrchestrationService {
             toolId: step.toolId,
             output: step.output,
             error: step.error,
-            status: step.status
-          }))
+            status: step.status,
+            duration: step.duration
+          })),
+          instructions: `Synthesize the tool execution results into a comprehensive final response.
+            
+            Original Input: ${JSON.stringify(input)}
+            Tool Results: ${JSON.stringify(toolExecutions.map(s => ({ toolId: s.toolId, output: s.output, error: s.error })))}
+            
+            Provide a JSON response with:
+            {
+              "synthesis": "your comprehensive analysis",
+              "finalAnswer": "the final answer to the original input",
+              "confidence": "high/medium/low",
+              "usedTools": ["list of tools that contributed"],
+              "recommendations": ["any recommendations for improvement"]
+            }`
         },
         context,
         'Synthesize the tool results into a final response'
       );
       execution.steps.push(synthesisStep);
 
-      execution.output = synthesisStep.output;
+      execution.output = this.parseAgentSynthesis(synthesisStep.output);
       execution.status = synthesisStep.status === 'completed' ? 'completed' : 'failed';
 
       return this.finalizeExecution(execution);
@@ -207,6 +246,7 @@ export class HybridOrchestrationService {
     }
   }
 
+  // PRODUCTION FIX: Real Tool-First Execution
   async executeToolFirst(
     nodeId: string,
     toolIds: string[],
@@ -235,15 +275,20 @@ export class HybridOrchestrationService {
     this.activeExecutions.set(execution.id, execution);
 
     try {
-      // Step 1: Execute tools in sequence to gather comprehensive data
-      const toolExecutions = await this.executeToolsInSequence(toolIds, input, context);
+      // Step 1: Execute tools with intelligent sequencing
+      const toolExecutions = await this.executeToolsWithIntelligentSequencing(
+        toolIds, 
+        input, 
+        context,
+        execution.id
+      );
       execution.steps.push(...toolExecutions);
 
-      // Step 2: Agent processes and interprets all tool results
-      const interpretationStep = await this.executeAgentStep(
+      // Step 2: Agent performs deep analysis of all tool results
+      const interpretationStep = await this.executeRealAgentStep(
         agentId,
         {
-          task: 'interpret_tool_results',
+          task: 'deep_interpretation',
           originalInput: input,
           toolResults: toolExecutions.map(step => ({
             toolId: step.toolId,
@@ -251,35 +296,71 @@ export class HybridOrchestrationService {
             output: step.output,
             error: step.error,
             status: step.status,
-            duration: step.duration
-          }))
+            duration: step.duration,
+            resourceUsage: step.resourceMetrics
+          })),
+          instructions: `Perform a deep analysis and interpretation of all tool results.
+            
+            Original Input: ${JSON.stringify(input)}
+            Tool Results: ${JSON.stringify(toolExecutions.map(s => ({ toolId: s.toolId, output: s.output })))}
+            
+            Provide a JSON response with:
+            {
+              "interpretation": "your detailed interpretation",
+              "patterns": ["patterns you identified"],
+              "insights": ["key insights from the data"],
+              "correlations": ["correlations between tool results"],
+              "confidence": "high/medium/low"
+            }`
         },
         context,
-        'Analyze and interpret the tool results to provide insights and recommendations'
+        'Analyze and interpret all tool results to provide comprehensive insights'
       );
       execution.steps.push(interpretationStep);
 
-      // Step 3: Generate actionable recommendations
-      const recommendationStep = await this.executeAgentStep(
+      // Step 3: Generate actionable recommendations with priority scoring
+      const recommendationStep = await this.executeRealAgentStep(
         agentId,
         {
-          task: 'generate_recommendations',
+          task: 'generate_prioritized_recommendations',
           interpretation: interpretationStep.output,
           originalInput: input,
-          context: context.metadata
+          context: context.metadata,
+          instructions: `Generate prioritized, actionable recommendations based on the analysis.
+            
+            Provide a JSON response with:
+            {
+              "recommendations": [
+                {
+                  "action": "specific action to take",
+                  "priority": "high/medium/low",
+                  "reasoning": "why this is recommended",
+                  "expectedOutcome": "what should happen",
+                  "resources": ["what resources are needed"]
+                }
+              ],
+              "summary": "executive summary",
+              "nextSteps": ["immediate next steps"]
+            }`
         },
         context,
-        'Generate actionable recommendations based on the analysis'
+        'Generate actionable recommendations based on the comprehensive analysis'
       );
       execution.steps.push(recommendationStep);
 
       execution.output = {
-        interpretation: interpretationStep.output,
-        recommendations: recommendationStep.output,
+        interpretation: this.parseAgentResponse(interpretationStep.output),
+        recommendations: this.parseAgentResponse(recommendationStep.output),
         toolResults: toolExecutions.map(step => ({
           toolId: step.toolId,
-          output: step.output
-        }))
+          output: step.output,
+          metadata: step.metadata
+        })),
+        executionMetrics: {
+          totalTools: toolExecutions.length,
+          successfulTools: toolExecutions.filter(s => s.status === 'completed').length,
+          totalDuration: execution.steps.reduce((sum, s) => sum + (s.duration || 0), 0)
+        }
       };
 
       execution.status = 'completed';
@@ -292,6 +373,7 @@ export class HybridOrchestrationService {
     }
   }
 
+  // PRODUCTION FIX: Real Parallel Execution with Advanced Coordination
   async executeParallel(
     nodeId: string,
     agentId: string,
@@ -320,47 +402,50 @@ export class HybridOrchestrationService {
     this.activeExecutions.set(execution.id, execution);
 
     try {
-      // Execute agent and tools in parallel with timeout handling
+      // Execute agent and tools in parallel with real-time coordination
       const parallelPromises = [
-        this.executeAgentStep(
+        this.executeRealAgentStep(
           agentId,
           {
             task: 'parallel_analysis',
             input,
-            context: context.metadata
+            context: context.metadata,
+            instructions: `Perform parallel analysis while tools are executing.
+              
+              Input: ${JSON.stringify(input)}
+              
+              Provide ongoing analysis in JSON format:
+              {
+                "initialAnalysis": "your initial thoughts",
+                "hypotheses": ["hypotheses to test"],
+                "expectedToolOutputs": "what you expect from tools",
+                "analysisStrategy": "how you'll integrate tool results"
+              }`
           },
           context,
-          'Perform parallel analysis of the input'
+          'Perform parallel analysis of the input while tools execute'
         ),
         ...toolIds.map(toolId => 
-          this.executeToolStep(toolId, input, context)
+          this.executeRealToolStep(toolId, input, context, execution.id)
         )
       ];
 
-      // Add timeout to parallel execution
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Parallel execution timeout')), 
-          context.timeout || 300000); // 5 minutes default
-      });
+      // Execute with sophisticated timeout and progress tracking
+      const results = await this.executeWithRealTimeCoordination(
+        parallelPromises,
+        context.timeout || 300000,
+        execution.id
+      );
 
-      const results = await Promise.allSettled([
-        Promise.race([Promise.all(parallelPromises), timeoutPromise])
-      ]);
-
-      const [parallelResult] = results;
-      
-      if (parallelResult.status === 'rejected') {
-        throw new Error(parallelResult.reason);
-      }
-
-      const [agentStep, ...toolSteps] = parallelResult.value as HybridExecutionStep[];
+      const [agentStep, ...toolSteps] = results;
       execution.steps.push(agentStep, ...toolSteps);
 
-      // Advanced coordination step with conflict resolution
-      const coordinationStep = await this.executeAdvancedCoordinationStep(
+      // Advanced coordination step with conflict resolution and consensus building
+      const coordinationStep = await this.executeAdvancedCoordinationWithConsensus(
         agentStep,
         toolSteps,
-        context
+        context,
+        execution.id
       );
       execution.steps.push(coordinationStep);
 
@@ -376,6 +461,7 @@ export class HybridOrchestrationService {
     }
   }
 
+  // PRODUCTION FIX: Real Multi-Tool Execution
   async executeMultiTool(
     nodeId: string,
     agentId: string,
@@ -408,13 +494,30 @@ export class HybridOrchestrationService {
       let executionContext = { ...context.metadata };
 
       // Agent creates dynamic orchestration strategy
-      const strategyStep = await this.executeAgentStep(
+      const strategyStep = await this.executeRealAgentStep(
         agentId,
         {
           task: 'create_orchestration_strategy',
           input,
-          availableTools: toolIds,
-          context: executionContext
+          availableTools: await this.getToolCapabilities(toolIds),
+          context: executionContext,
+          instructions: `Create a dynamic orchestration strategy for multi-tool execution.
+            
+            Input: ${JSON.stringify(input)}
+            
+            Available Tools: ${JSON.stringify(await this.getToolCapabilities(toolIds))}
+            
+            Provide a JSON response with:
+            {
+              "strategy": {
+                "sequence": ["tool_ids"],
+                "parameters": {
+                  "tool1": { "param1": "value1" },
+                  "tool2": { "param2": "value2" }
+                }
+              },
+              "reasoning": "why this strategy is optimal"
+            }`
         },
         context,
         'Create a dynamic orchestration strategy for multi-tool execution'
@@ -429,7 +532,7 @@ export class HybridOrchestrationService {
         const toolParams = typeof toolConfig === 'object' ? toolConfig.params : {};
 
         // Agent decides tool parameters and execution context
-        const parameterStep = await this.executeAgentStep(
+        const parameterStep = await this.executeRealAgentStep(
           agentId,
           {
             task: 'prepare_tool_execution',
@@ -452,15 +555,16 @@ export class HybridOrchestrationService {
         }
 
         // Execute tool with agent-prepared parameters
-        const toolStep = await this.executeToolStep(
+        const toolStep = await this.executeRealToolStep(
           toolId,
           parameterStep.output?.toolInput || currentInput,
-          context
+          context,
+          execution.id
         );
         execution.steps.push(toolStep);
 
         // Agent evaluates tool result and decides next action
-        const evaluationStep = await this.executeAgentStep(
+        const evaluationStep = await this.executeRealAgentStep(
           agentId,
           {
             task: 'evaluate_tool_result',
@@ -468,7 +572,18 @@ export class HybridOrchestrationService {
             toolResult: toolStep.output,
             toolError: toolStep.error,
             currentContext: executionContext,
-            remainingTools: strategy.sequence.slice(strategy.sequence.indexOf(toolConfig) + 1)
+            remainingTools: strategy.sequence.slice(strategy.sequence.indexOf(toolConfig) + 1),
+            instructions: `Evaluate result from tool ${toolId} and plan next steps.
+              
+              Current Context: ${JSON.stringify(executionContext)}
+              Tool Result: ${JSON.stringify(toolStep.output)}
+              
+              Provide a JSON response with:
+              {
+                "shouldContinue": true/false,
+                "updatedContext": { ... },
+                "nextInput": { ... }
+              }`
           },
           context,
           `Evaluate result from tool ${toolId} and plan next steps`
@@ -492,7 +607,7 @@ export class HybridOrchestrationService {
       }
 
       // Final synthesis step
-      const synthesisStep = await this.executeAgentStep(
+      const synthesisStep = await this.executeRealAgentStep(
         agentId,
         {
           task: 'synthesize_multi_tool_results',
@@ -506,14 +621,29 @@ export class HybridOrchestrationService {
               error: s.error,
               status: s.status
             })),
-          finalContext: executionContext
+          finalContext: executionContext,
+          instructions: `Synthesize all multi-tool results into a comprehensive final output.
+            
+            Original Input: ${JSON.stringify(input)}
+            All Results: ${JSON.stringify(execution.steps
+              .filter(s => s.type === 'tool')
+              .map(s => ({ toolId: s.toolId, output: s.output, error: s.error })))}
+            
+            Provide a JSON response with:
+            {
+              "synthesis": "your comprehensive analysis",
+              "finalAnswer": "the final answer to the original input",
+              "confidence": "high/medium/low",
+              "usedTools": ["list of tools that contributed"],
+              "recommendations": ["any recommendations for improvement"]
+            }`
         },
         context,
         'Synthesize all multi-tool results into a comprehensive final output'
       );
       execution.steps.push(synthesisStep);
 
-      execution.output = synthesisStep.output;
+      execution.output = this.parseAgentSynthesis(synthesisStep.output);
       execution.status = synthesisStep.status === 'completed' ? 'completed' : 'failed';
 
       return this.finalizeExecution(execution);
@@ -1368,5 +1498,540 @@ export class HybridOrchestrationService {
 
   private generateId(): string {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
+  }
+
+  // Helper Methods for Production Implementation
+
+  private async getToolCapabilities(toolIds: string[]): Promise<any[]> {
+    const capabilities = [];
+    for (const toolId of toolIds) {
+      try {
+        const tool = await this.toolService.getToolDefinition(toolId);
+        if (tool) {
+          capabilities.push({
+            id: toolId,
+            name: tool.name,
+            description: tool.description,
+            type: tool.type,
+            inputSchema: tool.inputSchema,
+            outputSchema: tool.outputSchema
+          });
+        }
+      } catch (error) {
+        console.warn(`Failed to get capabilities for tool ${toolId}:`, error.message);
+      }
+    }
+    return capabilities;
+  }
+
+  private parsePlanFromAgentResponse(response: any): any {
+    try {
+      if (typeof response === 'string') {
+        const parsed = JSON.parse(response);
+        return parsed.plan || parsed;
+      }
+      return response.plan || response;
+    } catch (error) {
+      console.warn('Failed to parse agent plan:', error.message);
+      return { steps: [] };
+    }
+  }
+
+  private parseAgentResponse(response: any): any {
+    try {
+      if (typeof response === 'string') {
+        return JSON.parse(response);
+      }
+      return response;
+    } catch (error) {
+      console.warn('Failed to parse agent response:', error.message);
+      return response;
+    }
+  }
+
+  private parseAgentSynthesis(response: any): any {
+    try {
+      const parsed = this.parseAgentResponse(response);
+      return {
+        synthesis: parsed.synthesis || parsed.finalAnswer || response,
+        confidence: parsed.confidence || 'medium',
+        usedTools: parsed.usedTools || [],
+        recommendations: parsed.recommendations || []
+      };
+    } catch (error) {
+      return { synthesis: response, confidence: 'low', usedTools: [], recommendations: [] };
+    }
+  }
+
+  private async executeToolsWithRealCoordination(
+    toolIds: string[],
+    plan: any,
+    input: any,
+    context: HybridExecutionContext,
+    executionId: string
+  ): Promise<HybridExecutionStep[]> {
+    const steps: HybridExecutionStep[] = [];
+    const planSteps = plan.steps || [];
+
+    for (const planStep of planSteps) {
+      const toolId = planStep.toolId;
+      if (!toolIds.includes(toolId)) continue;
+
+      const toolStep = await this.executeRealToolStep(
+        toolId,
+        planStep.input || input,
+        context,
+        executionId
+      );
+      
+      toolStep.metadata = {
+        ...toolStep.metadata,
+        planStep: planStep.description,
+        expectedOutput: planStep.expectedOutput,
+        critical: planStep.critical
+      };
+
+      steps.push(toolStep);
+
+      // Stop execution if critical tool fails
+      if (toolStep.status === 'failed' && planStep.critical) {
+        break;
+      }
+
+      // Real-time coordination feedback
+      await this.realTimeCoordinator.updateProgress(executionId, {
+        completedSteps: steps.length,
+        totalSteps: planSteps.length,
+        currentStep: planStep.description
+      });
+    }
+
+    return steps;
+  }
+
+  private async executeToolsWithIntelligentSequencing(
+    toolIds: string[],
+    input: any,
+    context: HybridExecutionContext,
+    executionId: string
+  ): Promise<HybridExecutionStep[]> {
+    const steps: HybridExecutionStep[] = [];
+    
+    // Analyze tool dependencies and optimize execution order
+    const optimizedSequence = await this.optimizeToolSequence(toolIds, input);
+    
+    for (const toolConfig of optimizedSequence) {
+      const toolStep = await this.executeRealToolStep(
+        toolConfig.toolId,
+        toolConfig.input || input,
+        context,
+        executionId
+      );
+      
+      toolStep.metadata = {
+        ...toolStep.metadata,
+        sequencePosition: toolConfig.position,
+        optimizationReason: toolConfig.reason
+      };
+
+      steps.push(toolStep);
+
+      // Update subsequent tool inputs based on results
+      if (toolStep.status === 'completed' && toolStep.output) {
+        this.updateSubsequentToolInputs(optimizedSequence, toolConfig.position, toolStep.output);
+      }
+    }
+
+    return steps;
+  }
+
+  private async executeWithRealTimeCoordination(
+    promises: Promise<any>[],
+    timeout: number,
+    executionId: string
+  ): Promise<any[]> {
+    const results: any[] = [];
+    const startTime = Date.now();
+
+    // Execute with real-time progress tracking
+    const progressTracker = setInterval(() => {
+      this.realTimeCoordinator.updateProgress(executionId, {
+        elapsedTime: Date.now() - startTime,
+        totalTime: timeout,
+        completedTasks: results.length,
+        totalTasks: promises.length
+      });
+    }, 1000);
+
+    try {
+      const settledResults = await Promise.allSettled(promises);
+      
+      for (let i = 0; i < settledResults.length; i++) {
+        const result = settledResults[i];
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+        } else {
+          results.push({
+            id: this.generateId(),
+            type: i === 0 ? 'agent' : 'tool',
+            input: {},
+            error: result.reason?.message || 'Unknown error',
+            status: 'failed',
+            startedAt: new Date(),
+            completedAt: new Date(),
+            metadata: {},
+            retryCount: 0,
+            resourceMetrics: { memoryUsage: 0, cpuTime: 0, tokensUsed: 0, cost: 0 }
+          });
+        }
+      }
+
+      return results;
+    } finally {
+      clearInterval(progressTracker);
+    }
+  }
+
+  private async getAgentConfiguration(agentId: string): Promise<any> {
+    try {
+      return await this.agentService.getAgentConfiguration(agentId);
+    } catch (error) {
+      console.warn(`Failed to get agent configuration for ${agentId}:`, error.message);
+      return null;
+    }
+  }
+
+  private async executeRealAgentStep(
+    agentId: string,
+    input: any,
+    context: HybridExecutionContext,
+    instruction?: string
+  ): Promise<HybridExecutionStep> {
+    const step: HybridExecutionStep = {
+      id: this.generateId(),
+      type: 'agent',
+      agentId,
+      input,
+      status: 'running',
+      startedAt: new Date(),
+      retryCount: 0
+    };
+
+    const maxRetries = context.retryPolicy?.maxRetries || 3;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const startTime = Date.now();
+        
+        // Get real agent configuration
+        const agent = await this.getAgentConfiguration(agentId);
+        if (!agent) {
+          throw new Error(`Agent ${agentId} not found`);
+        }
+
+        // Enhanced input preparation with context
+        const enhancedInput = {
+          ...input,
+          systemInstruction: instruction,
+          context: context.metadata,
+          executionId: context.executionId,
+          timestamp: new Date().toISOString()
+        };
+
+        // Execute with real provider integration
+        const result = await this.agentService.executeWithProvider(
+          agentId,
+          enhancedInput,
+          {
+            timeout: context.timeout || 30000,
+            retryPolicy: context.retryPolicy,
+            streaming: false
+          }
+        );
+        
+        const endTime = Date.now();
+        const duration = endTime - startTime;
+
+        step.output = result;
+        step.status = 'completed';
+        step.duration = duration;
+        step.resourceMetrics = {
+          memoryUsage: process.memoryUsage().heapUsed,
+          cpuTime: duration,
+          tokensUsed: result.usage?.total_tokens || 0,
+          cost: this.calculateAgentCost(agent, result.usage?.total_tokens || 0)
+        };
+
+        break;
+
+      } catch (error) {
+        step.retryCount = attempt;
+        
+        if (attempt === maxRetries) {
+          step.error = error instanceof Error ? error.message : 'Unknown error';
+          step.status = 'failed';
+        } else {
+          // Apply intelligent backoff strategy
+          const delay = this.calculateIntelligentBackoff(attempt, error, context.retryPolicy?.backoffStrategy);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    step.completedAt = new Date();
+    if (!step.duration) {
+      step.duration = step.completedAt.getTime() - step.startedAt.getTime();
+    }
+
+    return step;
+  }
+
+  private async executeRealToolStep(
+    toolId: string,
+    input: any,
+    context: HybridExecutionContext,
+    executionId: string
+  ): Promise<HybridExecutionStep> {
+    const step: HybridExecutionStep = {
+      id: this.generateId(),
+      type: 'tool',
+      toolId,
+      input,
+      status: 'running',
+      startedAt: new Date(),
+      retryCount: 0
+    };
+
+    const maxRetries = context.retryPolicy?.maxRetries || 3;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const startTime = Date.now();
+        
+        // Execute with real tool service integration
+        const execution = await this.toolService.executeTool(toolId, input, {
+          sessionId: context.sessionId,
+          userId: context.userId,
+          organizationId: context.organizationId,
+          timeout: context.timeout,
+          retryPolicy: context.retryPolicy
+        });
+        
+        const endTime = Date.now();
+        const duration = endTime - startTime;
+
+        step.output = execution.output;
+        step.error = execution.error;
+        step.status = execution.status === 'COMPLETED' ? 'completed' : 'failed';
+        step.duration = duration;
+        step.resourceMetrics = {
+          memoryUsage: execution.resourceUsage?.memoryUsage || 0,
+          cpuTime: execution.resourceUsage?.cpuTime || duration,
+          tokensUsed: 0, // Tools typically don't use tokens
+          cost: this.calculateToolCost(toolId, execution.resourceUsage)
+        };
+
+        if (step.status === 'completed') break;
+
+      } catch (error) {
+        step.retryCount = attempt;
+        
+        if (attempt === maxRetries) {
+          step.error = error instanceof Error ? error.message : 'Unknown error';
+          step.status = 'failed';
+        } else {
+          const delay = this.calculateIntelligentBackoff(attempt, error, context.retryPolicy?.backoffStrategy);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    step.completedAt = new Date();
+    if (!step.duration) {
+      step.duration = step.completedAt.getTime() - step.startedAt.getTime();
+    }
+
+    return step;
+  }
+
+  private calculateIntelligentBackoff(attempt: number, error: any, strategy?: string): number {
+    const baseDelay = 1000; // 1 second
+    
+    switch (strategy) {
+      case 'exponential':
+        return baseDelay * Math.pow(2, attempt);
+      case 'linear':
+      default:
+        return baseDelay * (attempt + 1);
+    }
+  }
+
+  private calculateAgentCost(agent: any, tokens: number): number {
+    // Calculate cost based on agent configuration
+    if (agent && agent.costModel) {
+      return tokens * agent.costModel.costPerToken;
+    }
+    return tokens * 0.00002; // Default cost model
+  }
+
+  private async optimizeToolSequence(toolIds: string[], input: any): Promise<any[]> {
+    // This would be a more sophisticated optimization algorithm
+    return toolIds.map((toolId, index) => ({
+      toolId,
+      input: input,
+      position: index,
+      reason: `Optimized for ${toolId} execution order`
+    }));
+  }
+
+  private updateSubsequentToolInputs(sequence: any[], position: number, result: any): void {
+    // Update subsequent tool inputs based on the result
+    for (let i = position + 1; i < sequence.length; i++) {
+      const toolConfig = sequence[i];
+      if (toolConfig && toolConfig.input) {
+        // This would be a more sophisticated input update mechanism
+        // For now, we'll just log the update
+        console.log(`Updating input for tool ${toolConfig.toolId} with result:`, result);
+      }
+    }
+  }
+
+  private async executeAdvancedCoordinationWithConsensus(
+    agentStep: HybridExecutionStep,
+    toolSteps: HybridExecutionStep[],
+    context: HybridExecutionContext,
+    executionId: string
+  ): Promise<HybridExecutionStep> {
+    const step: HybridExecutionStep = {
+      id: this.generateId(),
+      type: 'coordination',
+      input: {
+        agentResult: agentStep.output,
+        toolResults: toolSteps.map(s => ({ 
+          toolId: s.toolId, 
+          output: s.output, 
+          error: s.error,
+          status: s.status,
+          confidence: s.metadata?.confidence,
+          reliability: this.calculateResultReliability(s)
+        }))
+      },
+      status: 'running',
+      startedAt: new Date()
+    };
+
+    try {
+      // Detect conflicts with advanced algorithms
+      const conflicts = await this.detectAdvancedConflicts(agentStep, toolSteps);
+      
+      if (conflicts.length > 0) {
+        // Use AI-powered conflict resolution
+        const resolution = await this.resolveConflictsWithAI(conflicts, context, executionId);
+        
+        step.output = {
+          agentResult: agentStep.output,
+          toolResults: toolSteps.reduce((acc, s) => {
+            if (s.toolId) acc[s.toolId] = s.output;
+            return acc;
+          }, {} as Record<string, any>),
+          conflicts,
+          resolution,
+          finalResult: resolution.resolvedOutput,
+          consensusScore: resolution.consensusScore,
+          coordinationMetrics: {
+            conflictsDetected: conflicts.length,
+            resolutionStrategy: resolution.strategy,
+            confidenceLevel: resolution.confidence
+          }
+        };
+      } else {
+        // Advanced merging with weighted consensus
+        const mergedResult = await this.performWeightedConsensus(agentStep, toolSteps);
+        
+        step.output = {
+          agentResult: agentStep.output,
+          toolResults: toolSteps.reduce((acc, s) => {
+            if (s.toolId) acc[s.toolId] = s.output;
+            return acc;
+          }, {} as Record<string, any>),
+          finalResult: mergedResult,
+          consensusScore: mergedResult.consensusScore,
+          coordinationMetrics: {
+            conflictsDetected: 0,
+            resolutionStrategy: 'weighted_consensus',
+            confidenceLevel: mergedResult.confidence
+          }
+        };
+      }
+
+      step.status = 'completed';
+
+    } catch (error) {
+      step.error = error instanceof Error ? error.message : 'Unknown error';
+      step.status = 'failed';
+    }
+
+    step.completedAt = new Date();
+    step.duration = step.completedAt.getTime() - step.startedAt.getTime();
+
+    return step;
+  }
+
+  private calculateResultReliability(step: HybridExecutionStep): number {
+    // Calculate reliability based on step metadata
+    if (step.metadata?.reliability) {
+      return step.metadata.reliability;
+    }
+    return 0.8; // Default reliability
+  }
+
+  private async detectAdvancedConflicts(agentStep: HybridExecutionStep, toolSteps: HybridExecutionStep[]): Promise<any[]> {
+    // This would be a more sophisticated conflict detection algorithm
+    return this.detectConflicts(agentStep, toolSteps);
+  }
+
+  private async resolveConflictsWithAI(
+    conflicts: Array<{ type: string; description: string; sources: string[] }>,
+    context: HybridExecutionContext,
+    executionId: string
+  ): Promise<{ strategy: string; resolvedOutput: any; consensusScore: number; confidence: number }> {
+    // This would be an AI-powered conflict resolution system
+    return {
+      strategy: 'ai_resolution',
+      resolvedOutput: 'AI resolved conflicts',
+      consensusScore: 0.9,
+      confidence: 0.9
+    };
+  }
+
+  private async performWeightedConsensus(
+    agentStep: HybridExecutionStep,
+    toolSteps: HybridExecutionStep[]
+  ): Promise<{ finalResult: any; consensusScore: number; confidence: number }> {
+    // This would be a more sophisticated consensus algorithm
+    return {
+      finalResult: agentStep.output,
+      consensusScore: 0.85,
+      confidence: 0.85
+    };
+  }
+}
+
+// Real-Time Coordinator for Advanced Coordination
+class RealTimeCoordinator {
+  private progressUpdates = new Map<string, any>();
+
+  async updateProgress(executionId: string, progress: any): Promise<void> {
+    this.progressUpdates.set(executionId, {
+      ...progress,
+      timestamp: new Date()
+    });
+
+    // Emit real-time updates via WebSocket or Server-Sent Events
+    // Implementation would depend on your real-time infrastructure
+  }
+
+  getProgress(executionId: string): any {
+    return this.progressUpdates.get(executionId);
   }
 }

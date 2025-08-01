@@ -52,12 +52,16 @@ export class ToolService {
   private activeExecutions = new Map<string, ToolExecution>();
   private circuitBreakers = new Map<string, { failures: number; lastFailure: Date; isOpen: boolean }>();
   private performanceMetrics = new Map<string, { avgDuration: number; successRate: number; totalExecutions: number }>();
+  private vectorStore: VectorStoreService | null = null;
+  private browserPool: BrowserPoolService | null = null;
 
   constructor() {
     this.initializeToolService();
+    this.initializeVectorStore();
+    this.initializeBrowserPool();
   }
 
-  // Core Tool Execution
+  // PRODUCTION FIX: Core Tool Execution with Real Implementation
   async executeTool(
     toolId: string,
     input: any,
@@ -413,6 +417,7 @@ export class ToolService {
     }
   }
 
+  // PRODUCTION FIX: Real Vector Search Implementation
   private async executeRagRetrievalTool(
     tool: ToolDefinition,
     input: any,
@@ -421,11 +426,15 @@ export class ToolService {
     const startTime = Date.now();
 
     try {
-      const config = tool.config || {};
+      const config = tool.config as any;
       const query = input.query || input.text || JSON.stringify(input);
       
-      // Mock RAG implementation - replace with actual vector database integration
-      const results = await this.performVectorSearch(query, config);
+      if (!config.knowledgeBaseId) {
+        throw new Error('Knowledge base ID is required for RAG retrieval');
+      }
+
+      // Real vector search implementation
+      const searchResults = await this.performRealVectorSearch(query, config);
       
       execution.resourceUsage.cpuTime = Date.now() - startTime;
       execution.resourceUsage.memoryUsage = process.memoryUsage().heapUsed;
@@ -433,11 +442,15 @@ export class ToolService {
 
       return {
         query,
-        results,
-        metadata: {
-          totalResults: results.length,
-          searchTime: Date.now() - startTime
-        }
+        results: searchResults.documents.map((doc: any, index: number) => ({
+          content: doc.content,
+          score: searchResults.scores[index],
+          metadata: doc.metadata,
+          source: doc.source
+        })),
+        totalResults: searchResults.documents.length,
+        searchTime: Date.now() - startTime,
+        knowledgeBaseId: config.knowledgeBaseId
       };
 
     } catch (error) {
@@ -446,21 +459,31 @@ export class ToolService {
     }
   }
 
+  // PRODUCTION FIX: Real Browser Automation
   private async executeBrowserAutomationTool(
     tool: ToolDefinition,
     input: any,
     execution: ToolExecution
   ): Promise<any> {
     const startTime = Date.now();
+    let browser = null;
+    let page = null;
 
     try {
-      // Mock browser automation - replace with actual Playwright/Puppeteer integration
       const actions = input.actions || [];
       const results = [];
 
+      // Get browser from pool or create new one
+      browser = await this.getBrowserFromPool();
+      page = await browser.newPage();
+
+      // Set realistic viewport and user agent
+      await page.setViewport({ width: 1920, height: 1080 });
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
       for (const action of actions) {
-        const result = await this.performBrowserAction(action);
-        results.push(result);
+        const actionResult = await this.performRealBrowserAction(page, action);
+        results.push(actionResult);
       }
 
       execution.resourceUsage.cpuTime = Date.now() - startTime;
@@ -470,16 +493,22 @@ export class ToolService {
         actions: actions.length,
         results,
         metadata: {
-          executionTime: Date.now() - startTime
+          executionTime: Date.now() - startTime,
+          browserVersion: await browser.version(),
+          userAgent: await page.evaluate(() => navigator.userAgent)
         }
       };
 
     } catch (error) {
       execution.resourceUsage.cpuTime = Date.now() - startTime;
       throw error;
+    } finally {
+      if (page) await page.close();
+      if (browser) await this.returnBrowserToPool(browser);
     }
   }
 
+  // PRODUCTION FIX: Real Database Query Implementation
   private async executeDatabaseQueryTool(
     tool: ToolDefinition,
     input: any,
@@ -488,7 +517,7 @@ export class ToolService {
     const startTime = Date.now();
 
     try {
-      const config = tool.config || {};
+      const config = tool.config as any;
       const query = input.query;
       const params = input.params || [];
 
@@ -496,8 +525,28 @@ export class ToolService {
         throw new Error('Database query tool requires query parameter');
       }
 
-      // Mock database execution - replace with actual database integration
-      const results = await this.executeDbQuery(query, params, config);
+      if (!config.connectionString && !config.database) {
+        throw new Error('Database connection configuration is required');
+      }
+
+      // Real database execution based on type
+      let results;
+      switch (config.type) {
+        case 'postgresql':
+          results = await this.executePostgreSQLQuery(config, query, params);
+          break;
+        case 'mysql':
+          results = await this.executeMySQLQuery(config, query, params);
+          break;
+        case 'mongodb':
+          results = await this.executeMongoDBQuery(config, query, params);
+          break;
+        case 'redis':
+          results = await this.executeRedisQuery(config, query, params);
+          break;
+        default:
+          throw new Error(`Unsupported database type: ${config.type}`);
+      }
 
       execution.resourceUsage.cpuTime = Date.now() - startTime;
       execution.resourceUsage.memoryUsage = process.memoryUsage().heapUsed;
@@ -505,16 +554,341 @@ export class ToolService {
 
       return {
         query,
-        results,
-        metadata: {
-          rowCount: Array.isArray(results) ? results.length : 1,
-          executionTime: Date.now() - startTime
-        }
+        parameters: params,
+        results: results.rows || results,
+        rowCount: results.rowCount || (Array.isArray(results) ? results.length : 1),
+        executionTime: Date.now() - startTime,
+        databaseType: config.type
       };
 
     } catch (error) {
       execution.resourceUsage.cpuTime = Date.now() - startTime;
       throw error;
+    }
+  }
+
+  // PRODUCTION FIX: Real Vector Search Implementation
+  private async performRealVectorSearch(query: string, config: any): Promise<any> {
+    try {
+      // Initialize vector store if not already done
+      if (!this.vectorStore) {
+        await this.initializeVectorStore();
+      }
+
+      // Generate embeddings for the query
+      const queryEmbedding = await this.generateEmbedding(query);
+
+      // Perform similarity search
+      const searchResults = await this.vectorStore!.similaritySearch(
+        queryEmbedding,
+        config.limit || 5,
+        config.threshold || 0.7,
+        {
+          knowledgeBaseId: config.knowledgeBaseId,
+          filters: config.filters || {}
+        }
+      );
+
+      return searchResults;
+    } catch (error) {
+      throw new Error(`Vector search failed: ${error.message}`);
+    }
+  }
+
+  // PRODUCTION FIX: Real Browser Action Implementation
+  private async performRealBrowserAction(page: any, action: any): Promise<any> {
+    const startTime = Date.now();
+
+    try {
+      switch (action.type) {
+        case 'navigate':
+          await page.goto(action.url, { 
+            waitUntil: 'networkidle2',
+            timeout: action.timeout || 30000
+          });
+          return {
+            type: 'navigate',
+            url: action.url,
+            finalUrl: page.url(),
+            title: await page.title(),
+            success: true,
+            duration: Date.now() - startTime
+          };
+
+        case 'click':
+          await page.waitForSelector(action.selector, { timeout: action.timeout || 10000 });
+          await page.click(action.selector);
+          return {
+            type: 'click',
+            selector: action.selector,
+            success: true,
+            duration: Date.now() - startTime
+          };
+
+        case 'type':
+          await page.waitForSelector(action.selector, { timeout: action.timeout || 10000 });
+          await page.type(action.selector, action.text, { delay: action.delay || 50 });
+          return {
+            type: 'type',
+            selector: action.selector,
+            text: action.text,
+            success: true,
+            duration: Date.now() - startTime
+          };
+
+        case 'screenshot':
+          const screenshot = await page.screenshot({
+            type: action.format || 'png',
+            fullPage: action.fullPage || false,
+            quality: action.quality || 80
+          });
+          return {
+            type: 'screenshot',
+            screenshot: screenshot.toString('base64'),
+            success: true,
+            duration: Date.now() - startTime
+          };
+
+        case 'extract_text':
+          const text = await page.evaluate((selector) => {
+            if (selector) {
+              const element = document.querySelector(selector);
+              return element ? element.textContent : null;
+            }
+            return document.body.textContent;
+          }, action.selector);
+          return {
+            type: 'extract_text',
+            selector: action.selector,
+            text,
+            success: true,
+            duration: Date.now() - startTime
+          };
+
+        case 'wait':
+          if (action.selector) {
+            await page.waitForSelector(action.selector, { timeout: action.timeout || 10000 });
+          } else {
+            await page.waitForTimeout(action.duration || 1000);
+          }
+          return {
+            type: 'wait',
+            selector: action.selector,
+            duration: action.duration,
+            success: true,
+            actualDuration: Date.now() - startTime
+          };
+
+        case 'evaluate':
+          const result = await page.evaluate(action.script);
+          return {
+            type: 'evaluate',
+            script: action.script,
+            result,
+            success: true,
+            duration: Date.now() - startTime
+          };
+
+        default:
+          throw new Error(`Unsupported browser action: ${action.type}`);
+      }
+    } catch (error) {
+      return {
+        type: action.type,
+        error: error.message,
+        success: false,
+        duration: Date.now() - startTime
+      };
+    }
+  }
+
+  // PRODUCTION FIX: Real Database Query Implementations
+  private async executePostgreSQLQuery(config: any, query: string, params: any[]): Promise<any> {
+    const { Pool } = require('pg');
+    const pool = new Pool({
+      connectionString: config.connectionString,
+      ssl: config.ssl || false,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
+
+    try {
+      const client = await pool.connect();
+      const result = await client.query(query, params);
+      client.release();
+      return result;
+    } finally {
+      await pool.end();
+    }
+  }
+
+  private async executeMySQLQuery(config: any, query: string, params: any[]): Promise<any> {
+    const mysql = require('mysql2/promise');
+    const connection = await mysql.createConnection({
+      host: config.host,
+      user: config.user,
+      password: config.password,
+      database: config.database,
+      port: config.port || 3306,
+      ssl: config.ssl || false
+    });
+
+    try {
+      const [rows, fields] = await connection.execute(query, params);
+      return { rows, fields, rowCount: Array.isArray(rows) ? rows.length : 1 };
+    } finally {
+      await connection.end();
+    }
+  }
+
+  private async executeMongoDBQuery(config: any, query: string, params: any[]): Promise<any> {
+    const { MongoClient } = require('mongodb');
+    const client = new MongoClient(config.connectionString);
+
+    try {
+      await client.connect();
+      const db = client.db(config.database);
+      const collection = db.collection(config.collection);
+
+      // Parse query as MongoDB operation
+      const operation = JSON.parse(query);
+      let result;
+
+      switch (operation.type) {
+        case 'find':
+          result = await collection.find(operation.filter || {}).limit(operation.limit || 100).toArray();
+          break;
+        case 'findOne':
+          result = await collection.findOne(operation.filter || {});
+          break;
+        case 'insertOne':
+          result = await collection.insertOne(operation.document);
+          break;
+        case 'updateOne':
+          result = await collection.updateOne(operation.filter, operation.update);
+          break;
+        case 'deleteOne':
+          result = await collection.deleteOne(operation.filter);
+          break;
+        case 'aggregate':
+          result = await collection.aggregate(operation.pipeline).toArray();
+          break;
+        default:
+          throw new Error(`Unsupported MongoDB operation: ${operation.type}`);
+      }
+
+      return { rows: result, rowCount: Array.isArray(result) ? result.length : 1 };
+    } finally {
+      await client.close();
+    }
+  }
+
+  private async executeRedisQuery(config: any, query: string, params: any[]): Promise<any> {
+    const Redis = require('ioredis');
+    const redis = new Redis({
+      host: config.host,
+      port: config.port || 6379,
+      password: config.password,
+      db: config.db || 0
+    });
+
+    try {
+      // Parse query as Redis command
+      const command = JSON.parse(query);
+      const result = await redis[command.operation](...(command.args || []));
+      return { rows: [result], rowCount: 1 };
+    } finally {
+      redis.disconnect();
+    }
+  }
+
+  // PRODUCTION FIX: Real Vector Store Implementation
+  private async initializeVectorStore(): Promise<void> {
+    try {
+      this.vectorStore = new VectorStoreService({
+        apiKey: process.env.VECTOR_DB_API_KEY,
+        environment: process.env.VECTOR_DB_ENVIRONMENT,
+        indexName: process.env.VECTOR_DB_INDEX
+      });
+      await this.vectorStore.initialize();
+    } catch (error) {
+      console.warn('Vector store initialization failed, using fallback:', error.message);
+      // Fallback to in-memory vector store
+      this.vectorStore = new InMemoryVectorStore();
+    }
+  }
+
+  // PRODUCTION FIX: Real Browser Pool Implementation
+  private async initializeBrowserPool(): Promise<void> {
+    try {
+      this.browserPool = new BrowserPoolService({
+        maxBrowsers: 3,
+        launchOptions: {
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+          ]
+        }
+      });
+      await this.browserPool.initialize();
+    } catch (error) {
+      console.warn('Browser pool initialization failed:', error.message);
+    }
+  }
+
+  // Browser Pool Management
+  private async getBrowserFromPool(): Promise<any> {
+    if (this.browserPool) {
+      return await this.browserPool.getBrowser();
+    }
+    
+    // Fallback: create new browser
+    const puppeteer = require('puppeteer');
+    return await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+  }
+
+  private async returnBrowserToPool(browser: any): Promise<void> {
+    if (this.browserPool) {
+      await this.browserPool.returnBrowser(browser);
+    } else {
+      await browser.close();
+    }
+  }
+
+  // PRODUCTION FIX: Real Embedding Generation
+  private async generateEmbedding(text: string): Promise<number[]> {
+    try {
+      // Use OpenAI embeddings or local model
+      const response = await fetch('https://api.openai.com/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          input: text,
+          model: 'text-embedding-ada-002'
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Embedding API failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.data[0].embedding;
+    } catch (error) {
+      throw new Error(`Embedding generation failed: ${error.message}`);
     }
   }
 
@@ -822,5 +1196,133 @@ export class ToolService {
 
   private generateId(): string {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
+  }
+}
+
+// PRODUCTION FIX: Real Vector Store Service
+class VectorStoreService {
+  private config: any;
+  private client: any;
+
+  constructor(config: any) {
+    this.config = config;
+  }
+
+  async initialize(): Promise<void> {
+    // Initialize with actual vector database (Pinecone, Weaviate, etc.)
+    const { PineconeClient } = require('@pinecone-database/pinecone');
+    this.client = new PineconeClient();
+    await this.client.init({
+      apiKey: this.config.apiKey,
+      environment: this.config.environment
+    });
+  }
+
+  async similaritySearch(
+    queryEmbedding: number[],
+    limit: number,
+    threshold: number,
+    options: any
+  ): Promise<any> {
+    const index = this.client.Index(this.config.indexName);
+    
+    const queryRequest = {
+      vector: queryEmbedding,
+      topK: limit,
+      includeMetadata: true,
+      filter: options.filters
+    };
+
+    const queryResponse = await index.query({ queryRequest });
+    
+    return {
+      documents: queryResponse.matches.map((match: any) => ({
+        content: match.metadata.content,
+        metadata: match.metadata,
+        source: match.metadata.source
+      })),
+      scores: queryResponse.matches.map((match: any) => match.score)
+    };
+  }
+}
+
+// PRODUCTION FIX: Real Browser Pool Service
+class BrowserPoolService {
+  private browsers: any[] = [];
+  private config: any;
+  private maxBrowsers: number;
+
+  constructor(config: any) {
+    this.config = config;
+    this.maxBrowsers = config.maxBrowsers || 3;
+  }
+
+  async initialize(): Promise<void> {
+    const puppeteer = require('puppeteer');
+    
+    // Create initial browser pool
+    for (let i = 0; i < this.maxBrowsers; i++) {
+      const browser = await puppeteer.launch(this.config.launchOptions);
+      this.browsers.push(browser);
+    }
+  }
+
+  async getBrowser(): Promise<any> {
+    if (this.browsers.length > 0) {
+      return this.browsers.pop();
+    }
+    
+    // Create new browser if pool is empty
+    const puppeteer = require('puppeteer');
+    return await puppeteer.launch(this.config.launchOptions);
+  }
+
+  async returnBrowser(browser: any): Promise<void> {
+    if (this.browsers.length < this.maxBrowsers) {
+      this.browsers.push(browser);
+    } else {
+      await browser.close();
+    }
+  }
+}
+
+// In-Memory Vector Store Fallback
+class InMemoryVectorStore {
+  private documents: any[] = [];
+
+  async initialize(): Promise<void> {
+    // Load documents from local storage or API
+    try {
+      const response = await fetch('/api/knowledge/documents');
+      if (response.ok) {
+        this.documents = await response.json();
+      }
+    } catch (error) {
+      console.warn('Failed to load documents for in-memory vector store');
+    }
+  }
+
+  async similaritySearch(queryEmbedding: number[], limit: number, threshold: number, options: any): Promise<any> {
+    // Simple cosine similarity implementation
+    const results = this.documents
+      .map(doc => ({
+        ...doc,
+        score: this.cosineSimilarity(queryEmbedding, doc.embedding)
+      }))
+      .filter(doc => doc.score >= threshold)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+
+    return {
+      documents: results,
+      scores: results.map(r => r.score)
+    };
+  }
+
+  private cosineSimilarity(a: number[], b: number[]): number {
+    const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
+    const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+    const magnitudeB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
+    return dotProduct / (magnitudeA * magnitudeB);
   }
 }
