@@ -1,112 +1,134 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
-import { Loader2, CheckCircle, RefreshCw } from 'lucide-react';
-
+import { ArrowLeft, Building2, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { ThemeSwitcher } from '@/components/theme-switcher';
+import { useAuth } from '@/lib/auth/auth-context';
 
 export default function VerifyEmailPage() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const router = useRouter();
-  const [isResending, setIsResending] = useState(false);
-  const [resendSuccess, setResendSuccess] = useState(false);
+  const searchParams = useSearchParams();
+  const { verifyEmail } = useAuth();
 
-  async function handleResendEmail() {
-    setIsResending(true);
-    setResendSuccess(false);
-    
-    try {
-      // In a real implementation, this would call your resend verification API
-      console.log('Resending verification email');
+  useEffect(() => {
+    const verifyToken = async () => {
+      const token = searchParams.get('token');
       
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Show success message
-      setResendSuccess(true);
-    } catch (error) {
-      console.error('Failed to resend verification email:', error);
-    } finally {
-      setIsResending(false);
-    }
-  }
+      if (!token) {
+        setError('Invalid or missing verification token');
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const result = await verifyEmail({ token });
+        setSuccess(result.message);
+        
+        // Redirect to login after 3 seconds
+        setTimeout(() => {
+          router.push('/auth/login');
+        }, 3000);
+      } catch (err: any) {
+        setError(err.message || 'Email verification failed. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    verifyToken();
+  }, [searchParams, verifyEmail, router]);
 
   return (
-    <Card className="w-full shadow-lg border-0 bg-card">
-      <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl font-bold">Verify your email</CardTitle>
-        <CardDescription>
-          We've sent a verification link to your email address
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-col items-center justify-center space-y-4 py-6">
-          <div className="rounded-full bg-primary/10 p-3">
-            <CheckCircle className="h-8 w-8 text-primary" />
-          </div>
-          <div className="text-center space-y-2">
-            <h3 className="text-lg font-medium">Check your inbox</h3>
-            <p className="text-sm text-muted-foreground max-w-xs mx-auto">
-              We've sent a verification email to your inbox. Click the link in the email to verify your account.
-            </p>
-          </div>
-          
-          {resendSuccess && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="p-3 rounded-md bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 text-sm"
-            >
-              Verification email resent successfully!
-            </motion.div>
-          )}
-          
-          <div className="flex flex-col space-y-2 w-full max-w-xs">
-            <Button
-              onClick={handleResendEmail}
-              variant="outline"
-              disabled={isResending}
-              className="w-full"
-            >
-              {isResending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Resending...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Resend verification email
-                </>
-              )}
-            </Button>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950">
+      <div className="container mx-auto px-4 py-8">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-8">
+          <Link
+            href="/auth/login"
+            className="flex items-center gap-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Sign In
+          </Link>
+          <ThemeSwitcher />
+        </div>
+
+        <div className="max-w-md mx-auto">
+          <Card className="shadow-2xl border-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl">
+            <CardHeader className="space-y-1 pb-6 text-center">
+              <div className="mx-auto h-12 w-12 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center mb-4">
+                <Building2 className="h-6 w-6 text-white" />
+              </div>
+              <CardTitle className="text-2xl font-bold">Email Verification</CardTitle>
+              <CardDescription>
+                {isLoading ? 'Verifying your email address...' : 'Email verification status'}
+              </CardDescription>
+            </CardHeader>
             
-            <Button
-              asChild
-              className="w-full"
-            >
-              <Link href="/auth/login">
-                Continue to login
-              </Link>
-            </Button>
-          </div>
+            <CardContent className="space-y-6">
+              {isLoading && (
+                <div className="text-center py-8">
+                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-blue-600" />
+                  <p className="mt-4 text-slate-600 dark:text-slate-400">
+                    Please wait while we verify your email address...
+                  </p>
+                </div>
+              )}
+
+              {error && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+              
+              {success && (
+                <Alert className="border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200">
+                  <CheckCircle className="h-4 w-4" />
+                  <AlertDescription>{success}</AlertDescription>
+                </Alert>
+              )}
+
+              {!isLoading && (
+                <div className="text-center space-y-4">
+                  {success && (
+                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                      Redirecting to sign in page in a few seconds...
+                    </p>
+                  )}
+                  
+                  <Button
+                    onClick={() => router.push('/auth/login')}
+                    className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                  >
+                    Continue to Sign In
+                  </Button>
+                </div>
+              )}
+
+              {error && (
+                <div className="text-center text-sm text-slate-600 dark:text-slate-400">
+                  Need help?{' '}
+                  <Link
+                    href="/auth/register"
+                    className="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400"
+                  >
+                    Create a new account
+                  </Link>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
-      </CardContent>
-      <CardFooter className="flex justify-center">
-        <div className="text-center text-sm text-muted-foreground">
-          Need help? <Link href="/support" className="font-medium text-primary hover:underline">Contact support</Link>
-        </div>
-      </CardFooter>
-    </Card>
+      </div>
+    </div>
   );
 }
