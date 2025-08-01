@@ -145,118 +145,103 @@ const toolTypes = {
   custom: { icon: Wrench, color: 'bg-gray-500', label: 'Custom' }
 };
 
-const mockTools: Tool[] = [
-  {
-    id: '1',
-    name: 'Email Sender',
-    description: 'Send emails with attachments and templates using SMTP or email service APIs',
-    type: 'api',
-    category: 'Communication',
-    status: 'active',
-    version: '2.1.0',
-    author: 'SynapseAI Team',
-    usage: { today: 45, week: 312, month: 1247, total: 5892 },
-    performance: { successRate: 98.5, avgResponseTime: 1.2, errorRate: 1.5 },
-    lastUsed: '5 minutes ago',
-    createdAt: '2024-01-10',
-    updatedAt: '2024-01-20',
-    tags: ['email', 'communication', 'smtp', 'templates'],
-    dependencies: ['nodemailer', 'handlebars'],
-    authentication: 'api-key',
-    cost: 12.50,
-    rating: 4.8,
-    installs: 2847,
-    config: {
-      smtpHost: 'smtp.gmail.com',
-      smtpPort: 587,
-      templates: ['welcome', 'notification', 'alert']
-    }
-  },
-  {
-    id: '2',
-    name: 'Data Processor',
-    description: 'Process and transform data with built-in validation and cleaning capabilities',
-    type: 'function',
-    category: 'Data Processing',
-    status: 'active',
-    version: '1.5.2',
-    author: 'John Doe',
-    usage: { today: 23, week: 156, month: 678, total: 3421 },
-    performance: { successRate: 96.2, avgResponseTime: 2.8, errorRate: 3.8 },
-    lastUsed: '12 minutes ago',
-    createdAt: '2024-01-08',
-    updatedAt: '2024-01-18',
-    tags: ['data', 'processing', 'validation', 'cleaning'],
-    dependencies: ['pandas', 'numpy'],
-    authentication: 'none',
-    cost: 8.75,
-    rating: 4.6,
-    installs: 1923,
-    config: {
-      supportedFormats: ['csv', 'json', 'xml'],
-      validationRules: ['required', 'email', 'phone', 'date']
-    }
-  },
-  {
-    id: '3',
-    name: 'Web Scraper',
-    description: 'Extract data from websites with anti-bot protection and proxy support',
-    type: 'browser',
-    category: 'Web Scraping',
-    status: 'inactive',
-    version: '3.0.1',
-    author: 'Jane Smith',
-    usage: { today: 0, week: 45, month: 234, total: 1567 },
-    performance: { successRate: 89.3, avgResponseTime: 5.2, errorRate: 10.7 },
-    lastUsed: '2 hours ago',
-    createdAt: '2024-01-05',
-    updatedAt: '2024-01-15',
-    tags: ['scraping', 'web', 'automation', 'proxy'],
-    dependencies: ['puppeteer', 'cheerio'],
-    authentication: 'custom',
-    cost: 15.30,
-    rating: 4.3,
-    installs: 1456,
-    config: {
-      userAgent: 'Mozilla/5.0...',
-      timeout: 30000,
-      retries: 3
-    }
-  }
-];
+// Production API service for tools
+class ToolsApiService {
+  private baseUrl = '/api/tools';
 
-const mockTemplates: ToolTemplate[] = [
-  {
-    id: 't1',
-    name: 'Slack Notifier',
-    description: 'Send notifications to Slack channels with rich formatting and attachments',
-    category: 'Communication',
-    type: 'api',
-    tags: ['slack', 'notifications', 'webhooks'],
-    popularity: 95,
-    rating: 4.9,
-    installs: 3421,
-    author: 'SynapseAI',
-    preview: 'async function sendSlackMessage(channel, message) { ... }'
-  },
-  {
-    id: 't2',
-    name: 'PDF Generator',
-    description: 'Generate PDF documents from HTML templates with custom styling',
-    category: 'File Management',
-    type: 'function',
-    tags: ['pdf', 'documents', 'templates'],
-    popularity: 87,
-    rating: 4.7,
-    installs: 2156,
-    author: 'Community',
-    preview: 'function generatePDF(template, data) { ... }'
+  private getAuthHeaders() {
+    const token = localStorage.getItem('accessToken');
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    };
   }
-];
+
+  async getTools(organizationId: string): Promise<Tool[]> {
+    const response = await fetch(`${this.baseUrl}?organizationId=${organizationId}`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch tools');
+    }
+    
+    const data = await response.json();
+    return data.tools;
+  }
+
+  async getTemplates(organizationId: string): Promise<ToolTemplate[]> {
+    const response = await fetch(`${this.baseUrl}/templates?organizationId=${organizationId}`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch templates');
+    }
+    
+    const data = await response.json();
+    return data.templates;
+  }
+
+  async createTool(toolData: any): Promise<Tool> {
+    const response = await fetch(this.baseUrl, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(toolData)
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to create tool');
+    }
+    
+    return response.json();
+  }
+
+  async updateTool(id: string, toolData: any): Promise<Tool> {
+    const response = await fetch(`${this.baseUrl}/${id}`, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(toolData)
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to update tool');
+    }
+    
+    return response.json();
+  }
+
+  async deleteTool(id: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/${id}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders()
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to delete tool');
+    }
+  }
+
+  async executeTool(id: string, input: any): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/${id}/execute`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ input })
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to execute tool');
+    }
+    
+    return response.json();
+  }
+}
+
+const toolsApi = new ToolsApiService();
 
 export default function ToolManagement() {
-  const [tools, setTools] = useState<Tool[]>(mockTools);
-  const [templates, setTemplates] = useState<ToolTemplate[]>(mockTemplates);
+  const [tools, setTools] = useState<Tool[]>([]);
+  const [templates, setTemplates] = useState<ToolTemplate[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -266,6 +251,36 @@ export default function ToolManagement() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showTemplateDialog, setShowTemplateDialog] = useState(false);
   const [showTestDialog, setShowTestDialog] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load tools and templates on component mount
+  useEffect(() => {
+    loadToolsAndTemplates();
+  }, []);
+
+  const loadToolsAndTemplates = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Get organization ID from auth context or localStorage
+      const organizationId = localStorage.getItem('currentOrganizationId') || 'default';
+      
+      const [toolsData, templatesData] = await Promise.all([
+        toolsApi.getTools(organizationId),
+        toolsApi.getTemplates(organizationId)
+      ]);
+      
+      setTools(toolsData);
+      setTemplates(templatesData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load tools');
+      console.error('Failed to load tools and templates:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const [newTool, setNewTool] = useState({
     name: '',

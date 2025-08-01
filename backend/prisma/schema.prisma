@@ -43,7 +43,7 @@ model Organization {
   updatedAt DateTime @updatedAt
 
   // Relations
-  users     User[]
+  members   OrganizationMember[]
   agents    Agent[]
   tools     Tool[]
   workflows Workflow[]
@@ -58,7 +58,6 @@ model User {
   password                  String
   firstName                 String
   lastName                  String
-  role                      Role      @default(VIEWER)
   isActive                  Boolean   @default(true)
   isEmailVerified           Boolean   @default(false)
   emailVerificationToken    String?
@@ -73,26 +72,43 @@ model User {
   updatedAt                 DateTime  @default(now())
 
   // Relations
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
-  createdAgents    Agent[]    @relation("AgentCreator")
-  createdTools     Tool[]     @relation("ToolCreator")
-  createdWorkflows Workflow[] @relation("WorkflowCreator")
-  auditLogs        AuditLog[]
+  organizationMemberships OrganizationMember[]
+  createdAgents           Agent[]              @relation("AgentCreator")
+  createdTools            Tool[]               @relation("ToolCreator")
+  createdWorkflows        Workflow[]           @relation("WorkflowCreator")
+  auditLogs               AuditLog[]
 
   @@map("users")
 }
 
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           Role     @default(VIEWER)
+  permissions    String[] @default([])
+  isActive       Boolean  @default(true)
+  joinedAt       DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@map("organization_members")
+}
+
 model AuditLog {
-  id          String   @id @default(cuid())
-  action      String
-  resource    String
-  resourceId  String?
-  details     Json?
-  ipAddress   String?
-  userAgent   String?
-  createdAt   DateTime @default(now())
+  id             String   @id @default(cuid())
+  action         String
+  resource       String
+  resourceId     String?
+  details        Json?
+  ipAddress      String?
+  userAgent      String?
+  organizationId String?
+  createdAt      DateTime @default(now())
 
   // Relations
   userId String

@@ -50,6 +50,13 @@ const CreateToolSchema = z.object({
 const UpdateToolSchema = CreateToolSchema.partial();
 
 const ExecuteToolSchema = z.object({
+  input: z.record(z.any()),
+  sessionId: z.string().optional(),
+  timeout: z.number().positive().optional(),
+  context: z.record(z.any()).default({})
+});
+
+const ExecuteToolSchema = z.object({
   input: z.record(z.any()).default({}),
   context: z.record(z.any()).default({}),
   options: z.object({
@@ -1329,6 +1336,168 @@ export class ToolsService {
       status: execution.status,
       testInput,
       message: 'Test execution started. Check execution status for results.'
+    };
+  }
+
+  // Additional methods for API controller
+  async getTemplates(organizationId: string): Promise<any[]> {
+    // Return predefined tool templates
+    return [
+      {
+        id: 't1',
+        name: 'API Caller',
+        description: 'Make HTTP requests to external APIs with authentication and error handling',
+        category: 'Communication',
+        type: 'api',
+        tags: ['api', 'http', 'rest'],
+        popularity: 95,
+        rating: 4.8,
+        installs: 5420,
+        author: 'SynapseAI',
+        template: {
+          name: 'API Caller',
+          type: 'api',
+          endpoint: 'https://api.example.com/endpoint',
+          authentication: { type: 'api_key', headerName: 'X-API-Key' },
+          config: { timeout: 30000, retries: 3 }
+        }
+      },
+      {
+        id: 't2',
+        name: 'Data Processor',
+        description: 'Process and transform data with validation and cleaning',
+        category: 'Data Processing',
+        type: 'function',
+        tags: ['data', 'processing', 'validation'],
+        popularity: 87,
+        rating: 4.6,
+        installs: 3210,
+        author: 'Community',
+        template: {
+          name: 'Data Processor',
+          type: 'function',
+          code: `
+function processData(input) {
+  // Validate input
+  if (!input.data) throw new Error('Data is required');
+  
+  // Process data
+  const processed = input.data.map(item => ({
+    ...item,
+    processed: true,
+    timestamp: new Date().toISOString()
+  }));
+  
+  return { processed, count: processed.length };
+}
+          `.trim()
+        }
+      },
+      {
+        id: 't3',
+        name: 'Web Scraper',
+        description: 'Extract data from websites with browser automation',
+        category: 'Web Scraping',
+        type: 'browser',
+        tags: ['scraping', 'web', 'automation'],
+        popularity: 78,
+        rating: 4.4,
+        installs: 2150,
+        author: 'SynapseAI',
+        template: {
+          name: 'Web Scraper',
+          type: 'browser',
+          config: {
+            timeout: 60000,
+            headless: true,
+            viewport: { width: 1920, height: 1080 }
+          }
+        }
+      }
+    ];
+  }
+
+  async getExecutions(toolId: string, organizationId: string, limit: number = 50): Promise<any> {
+    const executions = await this.prisma.toolExecution.findMany({
+      where: {
+        toolId,
+        tool: { organizationId }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      include: {
+        tool: { select: { name: true } }
+      }
+    });
+
+    return {
+      executions: executions.map(execution => ({
+        id: execution.id,
+        status: execution.status,
+        input: execution.input,
+        output: execution.output,
+        error: execution.error,
+        startedAt: execution.createdAt,
+        completedAt: execution.completedAt,
+        duration: execution.duration,
+        toolName: execution.tool.name
+      })),
+      total: executions.length
+    };
+  }
+
+  async getPerformanceMetrics(toolId: string, organizationId: string): Promise<any> {
+    const tool = await this.getTool(toolId, organizationId);
+    
+    const executions = await this.prisma.toolExecution.findMany({
+      where: {
+        toolId,
+        tool: { organizationId }
+      },
+      select: {
+        status: true,
+        duration: true,
+        createdAt: true
+      }
+    });
+
+    const total = executions.length;
+    const successful = executions.filter(e => e.status === 'COMPLETED').length;
+    const failed = executions.filter(e => e.status === 'FAILED').length;
+    const avgDuration = executions.reduce((sum, e) => sum + (e.duration || 0), 0) / total || 0;
+
+    // Calculate usage over time periods
+    const now = new Date();
+    const today = executions.filter(e => 
+      e.createdAt >= new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    ).length;
+    
+    const thisWeek = executions.filter(e => {
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      return e.createdAt >= weekAgo;
+    }).length;
+
+    const thisMonth = executions.filter(e => {
+      const monthAgo = new Date();
+      monthAgo.setMonth(monthAgo.getMonth() - 1);
+      return e.createdAt >= monthAgo;
+    }).length;
+
+    return {
+      usage: {
+        today,
+        week: thisWeek,
+        month: thisMonth,
+        total
+      },
+      performance: {
+        successRate: total > 0 ? (successful / total) * 100 : 0,
+        errorRate: total > 0 ? (failed / total) * 100 : 0,
+        avgResponseTime: avgDuration / 1000 // Convert to seconds
+      },
+      status: tool.status,
+      lastUsed: executions[0]?.createdAt || null
     };
   }
 }

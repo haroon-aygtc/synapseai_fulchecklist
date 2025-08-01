@@ -102,6 +102,14 @@ export enum WorkflowStatus {
   COMPLETED = 'COMPLETED'
 }
 
+export interface WorkflowStats {
+  totalExecutions: number;
+  successRate: number;
+  averageExecutionTime: number;
+  lastExecuted?: Date;
+  errorCount: number;
+}
+
 export interface AgentConfiguration {
   systemPrompt: string;
   temperature: number;
@@ -299,4 +307,5 @@ export interface WorkflowTemplate {
   downloads: number;
   createdAt: Date;
   updatedAt: Date;
+  thumbnail?: string;
 }

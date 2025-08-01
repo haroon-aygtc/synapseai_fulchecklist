@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
-  Template, 
+  FileText, 
   Search, 
   Filter, 
   Star, 
@@ -33,10 +33,11 @@ import {
   Database,
   Globe,
   Code,
-  Layers
+  Layers,
+  BarChart3
 } from 'lucide-react';
 import { workflowService } from '@/lib/services/workflow-service';
-import { WorkflowTemplate, Workflow } from '@/lib/workflows/types';
+import { WorkflowTemplate, Workflow } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 interface WorkflowTemplatesProps {
@@ -48,7 +49,7 @@ interface WorkflowTemplatesProps {
 
 interface TemplateFilters {
   category: string;
-  complexity: string;
+  difficulty: string;
   tags: string[];
   search: string;
   sortBy: 'popular' | 'recent' | 'rating' | 'name';
@@ -85,7 +86,7 @@ export default function WorkflowTemplates({
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [filters, setFilters] = useState<TemplateFilters>({
     category: '',
-    complexity: '',
+    difficulty: '',
     tags: [],
     search: '',
     sortBy: 'popular'
@@ -99,7 +100,7 @@ export default function WorkflowTemplates({
     description: '',
     category: '',
     tags: '',
-    complexity: 'SIMPLE' as const
+    difficulty: 'beginner' as const
   });
 
   useEffect(() => {
@@ -131,7 +132,7 @@ export default function WorkflowTemplates({
   };
 
   const saveBookmarks = (bookmarks: Set<string>) => {
-    localStorage.setItem('workflow_template_bookmarks', JSON.stringify([...bookmarks]));
+    localStorage.setItem('workflow_template_bookmarks', JSON.stringify(Array.from(bookmarks)));
   };
 
   const applyFilters = () => {
@@ -142,9 +143,9 @@ export default function WorkflowTemplates({
       filtered = filtered.filter(template => template.category === filters.category);
     }
 
-    // Apply complexity filter
-    if (filters.complexity) {
-      filtered = filtered.filter(template => template.complexity === filters.complexity);
+    // Apply difficulty filter
+    if (filters.difficulty) {
+      filtered = filtered.filter(template => template.difficulty === filters.difficulty);
     }
 
     // Apply search filter
@@ -204,7 +205,7 @@ export default function WorkflowTemplates({
         description: saveTemplateData.description,
         category: saveTemplateData.category,
         tags: saveTemplateData.tags.split(',').map(tag => tag.trim()).filter(Boolean),
-        difficulty: saveTemplateData.complexity.toLowerCase() as any
+        difficulty: saveTemplateData.difficulty.toLowerCase() as any
       });
       
       setTemplates(prev => [template, ...prev]);
@@ -214,7 +215,7 @@ export default function WorkflowTemplates({
         description: '',
         category: '',
         tags: '',
-        complexity: 'SIMPLE'
+        difficulty: 'beginner'
       });
       
       onSaveAsTemplate?.(currentWorkflow);
@@ -304,12 +305,12 @@ export default function WorkflowTemplates({
           </p>
           
           <div className="flex items-center gap-2 mb-3">
-            <Badge className={getComplexityColor(template.complexity)}>
-              {template.complexity.toLowerCase()}
+            <Badge className={getComplexityColor(template.difficulty)}>
+              {template.difficulty.toLowerCase()}
             </Badge>
             <Badge variant="outline" className="text-xs">
               <Clock className="h-3 w-3 mr-1" />
-              {formatEstimatedTime(template.estimatedExecutionTime)}
+              {formatEstimatedTime(template.estimatedSetupTime)}
             </Badge>
           </div>
           
@@ -381,8 +382,8 @@ export default function WorkflowTemplates({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <h3 className="font-medium">{template.name}</h3>
-                  <Badge className={getComplexityColor(template.complexity)}>
-                    {template.complexity.toLowerCase()}
+                  <Badge className={getComplexityColor(template.difficulty)}>
+                    {template.difficulty.toLowerCase()}
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground mb-2 line-clamp-1">
@@ -400,7 +401,7 @@ export default function WorkflowTemplates({
                   </span>
                   <span className="flex items-center gap-1">
                     <Clock className="h-3 w-3" />
-                    {formatEstimatedTime(template.estimatedExecutionTime)}
+                    {formatEstimatedTime(template.estimatedSetupTime)}
                   </span>
                 </div>
               </div>
@@ -450,7 +451,7 @@ export default function WorkflowTemplates({
       <div className={cn('space-y-6', className)}>
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
-            <Template className="h-8 w-8 animate-pulse mx-auto mb-2" />
+            <FileText className="h-8 w-8 animate-pulse mx-auto mb-2" />
             <p>Loading templates...</p>
           </div>
         </div>
@@ -464,7 +465,7 @@ export default function WorkflowTemplates({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Template className="h-6 w-6" />
+            <FileText className="h-6 w-6" />
             Workflow Templates
           </h2>
           <p className="text-muted-foreground">
@@ -528,10 +529,10 @@ export default function WorkflowTemplates({
                     </div>
                     
                     <div>
-                      <Label htmlFor="template-complexity">Complexity</Label>
+                      <Label htmlFor="template-difficulty">Difficulty</Label>
                       <Select
-                        value={saveTemplateData.complexity}
-                        onValueChange={(value: any) => setSaveTemplateData(prev => ({ ...prev, complexity: value }))}
+                        value={saveTemplateData.difficulty}
+                        onValueChange={(value: any) => setSaveTemplateData(prev => ({ ...prev, difficulty: value }))}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -603,8 +604,8 @@ export default function WorkflowTemplates({
             </Select>
             
             <Select
-              value={filters.complexity}
-              onValueChange={(value) => setFilters(prev => ({ ...prev, complexity: value }))}
+              value={filters.difficulty}
+              onValueChange={(value) => setFilters(prev => ({ ...prev, difficulty: value }))}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Complexity" />
@@ -678,7 +679,7 @@ export default function WorkflowTemplates({
         {filteredTemplates.length === 0 && (
           <div className="flex items-center justify-center h-32">
             <div className="text-center">
-              <Template className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+              <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
               <p className="text-muted-foreground">No templates found</p>
               <p className="text-sm text-muted-foreground">
                 Try adjusting your filters or search terms
@@ -719,13 +720,13 @@ export default function WorkflowTemplates({
                   </div>
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Complexity</label>
-                    <Badge className={getComplexityColor(selectedTemplate.complexity)}>
-                      {selectedTemplate.complexity.toLowerCase()}
+                    <Badge className={getComplexityColor(selectedTemplate.difficulty)}>
+                      {selectedTemplate.difficulty.toLowerCase()}
                     </Badge>
                   </div>
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Est. Time</label>
-                    <p className="font-medium">{formatEstimatedTime(selectedTemplate.estimatedExecutionTime)}</p>
+                    <p className="font-medium">{formatEstimatedTime(selectedTemplate.estimatedSetupTime)}</p>
                   </div>
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Rating</label>
@@ -747,11 +748,11 @@ export default function WorkflowTemplates({
                   </div>
                 </div>
                 
-                {selectedTemplate.previewImage && (
+                {selectedTemplate.thumbnail && (
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Preview</label>
                     <img
-                      src={selectedTemplate.previewImage}
+                      src={selectedTemplate.thumbnail}
                       alt={selectedTemplate.name}
                       className="w-full rounded-lg border mt-2"
                     />

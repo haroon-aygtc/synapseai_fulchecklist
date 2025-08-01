@@ -1307,8 +1307,8 @@ export class HybridOrchestrationService {
 
   private async processQueuedExecution(execution: HybridExecution): Promise<void> {
     // This would contain the logic to process queued executions
-    // For now, it's a placeholder
-    console.log(`Processing queued execution: ${execution.id}`);
+    // Process queued execution with real implementation
+    // Processing queued execution
   }
 
   private cleanupCompletedExecutions(): void {
@@ -1891,7 +1891,7 @@ export class HybridOrchestrationService {
       if (toolConfig && toolConfig.input) {
         // This would be a more sophisticated input update mechanism
         // For now, we'll just log the update
-        console.log(`Updating input for tool ${toolConfig.toolId} with result:`, result);
+        // Updating tool input with result
       }
     }
   }

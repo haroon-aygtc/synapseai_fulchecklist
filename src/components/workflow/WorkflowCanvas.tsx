@@ -4,7 +4,14 @@
  * Comprehensive workflow builder with all node types, custom edges,
  * drag-and-drop functionality, and real-time execution monitoring.
  */
-
+// Production API service integration - no more mock data
+import workflowApiService, { 
+  WorkflowData as ApiWorkflowData, 
+  CreateWorkflowRequest, 
+  UpdateWorkflowRequest,
+  WorkflowExecution,
+  WorkflowNode as ApiWorkflowNode
+} from '@/lib/services/workflow-api-service';
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import ReactFlow, {
   Node,
@@ -49,6 +56,7 @@ import LoopNode from './nodes/LoopNode';
 import TransformerNode from './nodes/TransformerNode';
 import HumanInputNode from './nodes/HumanInputNode';
 import CustomEdge from './edges/CustomEdge';
+import { WorkflowNode } from '@/lib/types';
 
 import {
   Play,
@@ -210,7 +218,7 @@ interface WorkflowCanvasProps {
   onSave?: (nodes: Node[], edges: Edge[]) => void;
   onExecute?: (nodes: Node[], edges: Edge[]) => void;
   readOnly?: boolean;
-  className?: string;
+  className?: string; 
 }
 
 function WorkflowCanvasInner({
@@ -765,7 +773,7 @@ function NodePropertiesPanel({
           <Label htmlFor="node-label" className="text-xs">Label</Label>
           <Input
             id="node-label"
-            value={node.data.label || ''}
+            value={(node.data.label as string) || ''}
             onChange={(e) => onUpdate({ label: e.target.value })}
             disabled={readOnly}
             className="text-sm"
@@ -834,7 +842,7 @@ function EdgePropertiesPanel({
           <Label htmlFor="edge-label" className="text-xs">Label</Label>
           <Input
             id="edge-label"
-            value={edge.label || ''}
+            value={(edge.label as string) || ''}
             onChange={(e) => onUpdate({ label: e.target.value })}
             disabled={readOnly}
             className="text-sm"
@@ -845,7 +853,7 @@ function EdgePropertiesPanel({
           <Label htmlFor="edge-condition" className="text-xs">Condition</Label>
           <Textarea
             id="edge-condition"
-            value={edge.data?.condition || ''}
+            value={(edge.data?.condition as string) || ''}
             onChange={(e) => onUpdate({ 
               data: { ...edge.data, condition: e.target.value }
             })}
@@ -861,7 +869,7 @@ function EdgePropertiesPanel({
 }
 
 // Node-specific configuration components
-function AgentNodeConfig({ config, onUpdate, readOnly }: any) {
+function AgentNodeConfig({ config, onUpdate, readOnly }: { config: any, onUpdate: (config: any) => void, readOnly: boolean }) {
   return (
     <div className="space-y-3">
       <div>
@@ -890,7 +898,7 @@ function AgentNodeConfig({ config, onUpdate, readOnly }: any) {
   );
 }
 
-function ToolNodeConfig({ config, onUpdate, readOnly }: any) {
+function ToolNodeConfig({ config, onUpdate, readOnly }: { config: any, onUpdate: (config: any) => void, readOnly: boolean }) {
   return (
     <div className="space-y-3">
       <div>
@@ -919,7 +927,7 @@ function ToolNodeConfig({ config, onUpdate, readOnly }: any) {
   );
 }
 
-function ConditionNodeConfig({ config, onUpdate, readOnly }: any) {
+function ConditionNodeConfig({ config, onUpdate, readOnly }: { config: any, onUpdate: (config: any) => void, readOnly: boolean }) {
   return (
     <div className="space-y-3">
       <div>
@@ -937,7 +945,7 @@ function ConditionNodeConfig({ config, onUpdate, readOnly }: any) {
   );
 }
 
-function HumanInputNodeConfig({ config, onUpdate, readOnly }: any) {
+function HumanInputNodeConfig({ config, onUpdate, readOnly }: { config: any, onUpdate: (config: any) => void, readOnly: boolean }) {
   return (
     <div className="space-y-3">
       <div>

@@ -22,6 +22,7 @@ import {
   LineChart
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/auth-context';
+import { toast } from '@/components/ui/use-toast';
 import { agentService } from '@/lib/services/agent-service';
 import { toolService } from '@/lib/services/tool-service';
 import { workflowService } from '@/lib/services/workflow-service';
@@ -74,98 +75,82 @@ interface RecentActivity {
   status: 'success' | 'error' | 'running';
 }
 
+// Production API service integration
+import dashboardApiService, { 
+  DashboardStats as ApiDashboardStats,
+  RecentActivity as ApiRecentActivity 
+} from '@/lib/services/dashboard-api-service';
+
 export default function DashboardOverview() {
   const { user, organization, hasPermission } = useAuth();
   const router = useRouter();
   
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
+  const [stats, setStats] = useState<ApiDashboardStats | null>(null);
+  const [recentActivity, setRecentActivity] = useState<ApiRecentActivity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    if (organization?.id) {
+      loadDashboardData();
+      
+      // Set up real-time updates
+      const unsubscribe = dashboardApiService.subscribeToRealTimeUpdates((updates) => {
+        setStats(prev => prev ? { ...prev, ...updates } : null);
+      });
+
+      return unsubscribe;
+    }
+  }, [organization?.id]);
 
   const loadDashboardData = async () => {
     try {
       setIsLoading(true);
+      setError(null);
       
-      // Load stats from all services
-      const [agentsData, toolsData, workflowsData] = await Promise.all([
-        agentService.getAgents({ limit: 1 }),
-        toolService.getTools({ limit: 1 }),
-        workflowService.getWorkflows({ limit: 1 })
+      // Load real dashboard data from API
+      const [statsData, activityData] = await Promise.all([
+        dashboardApiService.getStats(),
+        dashboardApiService.getRecentActivity(20)
       ]);
 
-      // Mock stats for now - in real implementation, these would come from analytics endpoints
-      const mockStats: DashboardStats = {
-        agents: {
-          total: agentsData.total,
-          active: Math.floor(agentsData.total * 0.8),
-          draft: Math.floor(agentsData.total * 0.2),
-          totalSessions: 1247,
-          avgResponseTime: 1.2
-        },
-        tools: {
-          total: toolsData.total,
-          active: Math.floor(toolsData.total * 0.9),
-          totalExecutions: 5432,
-          successRate: 98.5
-        },
-        workflows: {
-          total: workflowsData.total,
-          active: Math.floor(workflowsData.total * 0.7),
-          running: 3,
-          totalExecutions: 892,
-          successRate: 94.2
-        },
-        costs: {
-          thisMonth: 1247.50,
-          lastMonth: 1089.30,
-          trend: 14.5,
-          breakdown: [
-            { provider: 'OpenAI', amount: 687.20, percentage: 55.1 },
-            { provider: 'Claude', amount: 324.80, percentage: 26.0 },
-            { provider: 'Gemini', amount: 235.50, percentage: 18.9 }
-          ]
-        }
-      };
-
-      setStats(mockStats);
-
-      // Mock recent activity
-      const mockActivity: RecentActivity[] = [
-        {
-          id: '1',
-          type: 'agent',
-          action: 'executed',
-          name: 'Customer Support Agent',
-          timestamp: new Date(Date.now() - 5 * 60 * 1000),
-          status: 'success'
-        },
-        {
-          id: '2',
-          type: 'workflow',
-          action: 'completed',
-          name: 'Data Processing Pipeline',
-          timestamp: new Date(Date.now() - 15 * 60 * 1000),
-          status: 'success'
-        },
-        {
-          id: '3',
-          type: 'tool',
-          action: 'failed',
-          name: 'Email Sender',
-          timestamp: new Date(Date.now() - 30 * 60 * 1000),
-          status: 'error'
-        }
-      ];
-
-      setRecentActivity(mockActivity);
-    } catch (error) {
-      console.error('Failed to load dashboard data:', error);
+      setStats(statsData);
+      setRecentActivity(activityData.activities);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load dashboard data';
+      setError(errorMessage);
+      toast({
+        title: 'Loading Failed',
+        description: errorMessage,
+        variant: 'destructive'
+      });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleRefreshData = async () => {
+    try {
+      await dashboardApiService.refreshCache();
+      await loadDashboardData();
+    } catch (error) {
+      // Error handling is done in the service
+    }
+  };
+
+  const handleExportData = async (type: 'stats' | 'activity' | 'usage') => {
+    try {
+      const blob = await dashboardApiService.exportData(type, 'csv');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `dashboard-${type}-${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      // Error handling is done in the service
     }
   };
 

@@ -282,7 +282,11 @@ const defaultActions: CommandPaletteAction[] = [
     icon: 'zap',
     shortcut: ['ctrl', 'n'],
     category: 'Create',
-    action: () => console.log('Create workflow')
+    action: () => {
+      if (typeof window !== 'undefined') {
+        window.location.href = '/workflows/create';
+      }
+    }
   },
   {
     id: 'create-agent',
@@ -291,7 +295,11 @@ const defaultActions: CommandPaletteAction[] = [
     icon: 'bot',
     shortcut: ['ctrl', 'shift', 'a'],
     category: 'Create',
-    action: () => console.log('Create agent')
+    action: () => {
+      if (typeof window !== 'undefined') {
+        window.location.href = '/agents/create';
+      }
+    }
   },
   {
     id: 'create-tool',
@@ -300,7 +308,11 @@ const defaultActions: CommandPaletteAction[] = [
     icon: 'wrench',
     shortcut: ['ctrl', 'shift', 't'],
     category: 'Create',
-    action: () => console.log('Create tool')
+    action: () => {
+      if (typeof window !== 'undefined') {
+        window.location.href = '/tools/create';
+      }
+    }
   },
   {
     id: 'search-workflows',
@@ -309,7 +321,11 @@ const defaultActions: CommandPaletteAction[] = [
     icon: 'search',
     shortcut: ['ctrl', 'f'],
     category: 'Search',
-    action: () => console.log('Search workflows')
+    action: () => {
+      if (typeof window !== 'undefined') {
+        window.location.href = '/workflows?search=true';
+      }
+    }
   },
   {
     id: 'toggle-theme',
@@ -318,7 +334,11 @@ const defaultActions: CommandPaletteAction[] = [
     icon: 'moon',
     shortcut: ['ctrl', 'shift', 'l'],
     category: 'Settings',
-    action: () => console.log('Toggle theme')
+    action: () => {
+      const theme = document.documentElement.classList.contains('dark') ? 'light' : 'dark';
+      document.documentElement.classList.toggle('dark');
+      localStorage.setItem('theme', theme);
+    }
   },
   {
     id: 'open-settings',
@@ -327,7 +347,11 @@ const defaultActions: CommandPaletteAction[] = [
     icon: 'settings',
     shortcut: ['ctrl', ','],
     category: 'Settings',
-    action: () => console.log('Open settings')
+    action: () => {
+      if (typeof window !== 'undefined') {
+        window.location.href = '/settings';
+      }
+    }
   },
   {
     id: 'show-help',
@@ -336,7 +360,11 @@ const defaultActions: CommandPaletteAction[] = [
     icon: 'help-circle',
     shortcut: ['?'],
     category: 'Help',
-    action: () => console.log('Show help')
+    action: () => {
+      if (typeof window !== 'undefined') {
+        window.open('/help', '_blank');
+      }
+    }
   },
   {
     id: 'show-shortcuts',
@@ -345,7 +373,13 @@ const defaultActions: CommandPaletteAction[] = [
     icon: 'keyboard',
     shortcut: ['ctrl', '/'],
     category: 'Help',
-    action: () => console.log('Show shortcuts')
+    action: () => {
+      if (typeof window !== 'undefined') {
+        const modal = document.createElement('div');
+        modal.innerHTML = '<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><div class="bg-white p-6 rounded-lg"><h3>Keyboard Shortcuts</h3><p>Ctrl+N: Create Workflow</p><p>Ctrl+Shift+A: Create Agent</p><p>Ctrl+F: Search</p><button onclick="this.closest(\'div\').remove()">Close</button></div></div>';
+        document.body.appendChild(modal);
+      }
+    }
   }
 ];
 

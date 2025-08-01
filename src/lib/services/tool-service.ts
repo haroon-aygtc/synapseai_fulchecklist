@@ -54,6 +54,7 @@ export class ToolService {
   private performanceMetrics = new Map<string, { avgDuration: number; successRate: number; totalExecutions: number }>();
   private vectorStore: VectorStoreService | null = null;
   private browserPool: BrowserPoolService | null = null;
+  private logger: any = null;
 
   constructor() {
     this.initializeToolService();
@@ -323,7 +324,12 @@ export class ToolService {
         input,
         output: null,
         console: {
-          log: (...args: any[]) => console.log(`[Tool ${tool.id}]`, ...args),
+          log: (...args: any[]) => {
+          // Tool execution logging - replace with proper logger in production
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[Tool ${tool.id}]`, ...args);
+          }
+        },
           error: (...args: any[]) => console.error(`[Tool ${tool.id}]`, ...args)
         },
         require: (module: string) => {
@@ -1049,32 +1055,180 @@ export class ToolService {
     metrics.successRate = ((metrics.successRate * (metrics.totalExecutions - 1)) + (successCount * 100)) / metrics.totalExecutions;
   }
 
-  // Mock implementations for external services
+  // Production implementations for external services
   private async performVectorSearch(query: string, config: any): Promise<any[]> {
-    // Mock vector search - replace with actual implementation
-    return [
-      { id: '1', content: 'Mock search result 1', score: 0.95 },
-      { id: '2', content: 'Mock search result 2', score: 0.87 },
-      { id: '3', content: 'Mock search result 3', score: 0.76 }
-    ];
+    try {
+      if (!this.vectorStore) {
+        throw new Error('Vector store not initialized');
+      }
+
+      // Generate embedding for the query
+      const embedding = await this.vectorStore.generateEmbedding(query);
+      
+      // Perform similarity search
+      const results = await this.vectorStore.similaritySearch({
+        vector: embedding,
+        topK: config.limit || 10,
+        threshold: config.threshold || 0.7,
+        filters: config.filters || {},
+        includeMetadata: true
+      });
+
+      return results.map(result => ({
+        id: result.id,
+        content: result.metadata.content || result.content,
+        score: result.score,
+        metadata: result.metadata,
+        source: result.metadata.source,
+        timestamp: result.metadata.timestamp
+      }));
+    } catch (error) {
+      this.logger?.error(`Vector search failed: ${error.message}`);
+      throw new Error(`Vector search execution failed: ${error.message}`);
+    }
   }
 
   private async performBrowserAction(action: any): Promise<any> {
-    // Mock browser action - replace with actual implementation
-    return {
-      action: action.type,
-      target: action.target,
-      result: 'success',
-      data: action.type === 'screenshot' ? 'base64_image_data' : 'action_result'
-    };
+    try {
+      if (!this.browserPool) {
+        throw new Error('Browser pool not initialized');
+      }
+
+      const browser = await this.browserPool.getBrowser();
+      const page = await browser.newPage();
+
+      try {
+        await page.setViewport({ width: 1920, height: 1080 });
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+
+        switch (action.type) {
+          case 'navigate':
+            await page.goto(action.url, { 
+              waitUntil: 'networkidle2',
+              timeout: action.timeout || 30000 
+            });
+            return { 
+              success: true, 
+              url: page.url(),
+              title: await page.title(),
+              timestamp: new Date().toISOString()
+            };
+
+          case 'screenshot':
+            const screenshot = await page.screenshot({ 
+              encoding: 'base64',
+              fullPage: action.fullPage || false,
+              quality: action.quality || 90
+            });
+            return { 
+              success: true, 
+              data: screenshot,
+              dimensions: await page.evaluate(() => ({
+                width: window.innerWidth,
+                height: window.innerHeight
+              }))
+            };
+
+          case 'extract':
+            const extractedData = await page.evaluate((selector) => {
+              const elements = document.querySelectorAll(selector);
+              return Array.from(elements).map(el => ({
+                text: el.textContent?.trim(),
+                html: el.innerHTML,
+                attributes: Object.fromEntries(
+                  Array.from(el.attributes).map(attr => [attr.name, attr.value])
+                )
+              }));
+            }, action.selector);
+            return { success: true, data: extractedData };
+
+          case 'click':
+            await page.click(action.selector);
+            await page.waitForTimeout(action.wait || 1000);
+            return { 
+              success: true, 
+              message: `Clicked element: ${action.selector}`,
+              url: page.url()
+            };
+
+          case 'type':
+            await page.type(action.selector, action.text);
+            return { 
+              success: true, 
+              message: `Typed text into: ${action.selector}`
+            };
+
+          case 'wait':
+            await page.waitForSelector(action.selector, {
+              timeout: action.timeout || 10000
+            });
+            return { 
+              success: true, 
+              message: `Element found: ${action.selector}`
+            };
+
+          default:
+            throw new Error(`Unsupported browser action: ${action.type}`);
+        }
+      } finally {
+        await page.close();
+        await this.browserPool.releaseBrowser(browser);
+      }
+    } catch (error) {
+      this.logger?.error(`Browser action failed: ${error.message}`);
+      throw new Error(`Browser automation failed: ${error.message}`);
+    }
   }
 
   private async executeDbQuery(query: string, params: any[], config: any): Promise<any> {
-    // Mock database query - replace with actual implementation
-    return [
-      { id: 1, name: 'Mock Result 1', value: 'data1' },
-      { id: 2, name: 'Mock Result 2', value: 'data2' }
-    ];
+    try {
+      // Validate query for security
+      const sanitizedQuery = this.sanitizeQuery(query);
+      const allowedOperations = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
+      const operation = sanitizedQuery.trim().split(' ')[0].toUpperCase();
+      
+      if (!allowedOperations.includes(operation)) {
+        throw new Error(`Unsupported database operation: ${operation}`);
+      }
+
+      // Execute query through secure API endpoint
+      const response = await fetch('/api/database/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`
+        },
+        body: JSON.stringify({
+          query: sanitizedQuery,
+          params: params || [],
+          config: {
+            timeout: config.timeout || 30000,
+            maxRows: config.maxRows || 1000,
+            organizationId: config.organizationId
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Database query failed: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      // Log query execution for audit
+      this.auditLog({
+        action: 'DATABASE_QUERY',
+        query: query.substring(0, 100), // Truncated for security
+        recordCount: Array.isArray(result.data) ? result.data.length : 1,
+        organizationId: config.organizationId,
+        timestamp: new Date().toISOString()
+      });
+
+      return result.data;
+    } catch (error) {
+      this.logger?.error(`Database query failed: ${error.message}`);
+      throw new Error(`Database query execution failed: ${error.message}`);
+    }
   }
 
   private evaluateCondition(condition: string, data: any): boolean {
@@ -1324,5 +1478,209 @@ class InMemoryVectorStore {
     const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
     const magnitudeB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
     return dotProduct / (magnitudeA * magnitudeB);
+  }
+
+  // Helper methods for production implementations
+  private sanitizeQuery(query: string): string {
+    // Remove potentially dangerous SQL commands
+    const dangerousPatterns = [
+      /DROP\s+TABLE/i,
+      /DROP\s+DATABASE/i,
+      /TRUNCATE/i,
+      /ALTER\s+TABLE/i,
+      /CREATE\s+TABLE/i,
+      /EXEC\s*\(/i,
+      /EXECUTE\s*\(/i,
+      /xp_/i,
+      /sp_/i
+    ];
+
+    for (const pattern of dangerousPatterns) {
+      if (pattern.test(query)) {
+        throw new Error(`Potentially dangerous SQL operation detected`);
+      }
+    }
+
+    return query.trim();
+  }
+
+  private getAuthToken(): string {
+    // Get authentication token from localStorage or context
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('accessToken') || '';
+    }
+    return '';
+  }
+
+  private auditLog(logData: any): void {
+    // Send audit log to backend
+    if (typeof window !== 'undefined') {
+      fetch('/api/audit/log', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`
+        },
+        body: JSON.stringify(logData)
+      }).catch(error => {
+        console.error('Failed to send audit log:', error);
+      });
+    }
+  }
+}
+
+// Supporting service interfaces and classes
+interface VectorStoreService {
+  generateEmbedding(text: string): Promise<number[]>;
+  similaritySearch(params: {
+    vector: number[];
+    topK: number;
+    threshold: number;
+    filters: any;
+    includeMetadata: boolean;
+  }): Promise<Array<{
+    id: string;
+    content: string;
+    score: number;
+    metadata: any;
+  }>>;
+}
+
+interface BrowserPoolService {
+  getBrowser(): Promise<any>;
+  releaseBrowser(browser: any): Promise<void>;
+}
+
+class ProductionVectorStoreService implements VectorStoreService {
+  async generateEmbedding(text: string): Promise<number[]> {
+    const response = await fetch('/api/embeddings/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.getAuthToken()}`
+      },
+      body: JSON.stringify({ text })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to generate embedding');
+    }
+
+    const result = await response.json();
+    return result.embedding;
+  }
+
+  async similaritySearch(params: any): Promise<any[]> {
+    const response = await fetch('/api/vector/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.getAuthToken()}`
+      },
+      body: JSON.stringify(params)
+    });
+
+    if (!response.ok) {
+      throw new Error('Vector search failed');
+    }
+
+    const result = await response.json();
+    return result.results;
+  }
+
+  private getAuthToken(): string {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('accessToken') || '';
+    }
+    return '';
+  }
+}
+
+class ProductionBrowserPoolService implements BrowserPoolService {
+  private browsers: any[] = [];
+  private maxBrowsers = 5;
+
+  async getBrowser(): Promise<any> {
+    // In production, this would manage a pool of browser instances
+    // For now, we'll use the browser automation API
+    const response = await fetch('/api/browser/get-instance', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.getAuthToken()}`
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to get browser instance');
+    }
+
+    const result = await response.json();
+    return {
+      newPage: async () => ({
+        setViewport: async (viewport: any) => {},
+        setUserAgent: async (userAgent: string) => {},
+        goto: async (url: string, options: any) => {
+          return this.browserAction('navigate', { url, ...options });
+        },
+        screenshot: async (options: any) => {
+          const result = await this.browserAction('screenshot', options);
+          return result.data;
+        },
+        evaluate: async (fn: any, ...args: any[]) => {
+          return this.browserAction('evaluate', { function: fn.toString(), args });
+        },
+        click: async (selector: string) => {
+          return this.browserAction('click', { selector });
+        },
+        type: async (selector: string, text: string) => {
+          return this.browserAction('type', { selector, text });
+        },
+        waitForSelector: async (selector: string, options: any) => {
+          return this.browserAction('wait', { selector, ...options });
+        },
+        close: async () => {
+          // Close page
+        },
+        url: () => result.currentUrl || '',
+        title: async () => result.title || ''
+      })
+    };
+  }
+
+  async releaseBrowser(browser: any): Promise<void> {
+    // Release browser back to pool
+    await fetch('/api/browser/release-instance', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.getAuthToken()}`
+      },
+      body: JSON.stringify({ browserId: browser.id })
+    });
+  }
+
+  private async browserAction(action: string, params: any): Promise<any> {
+    const response = await fetch('/api/browser/action', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.getAuthToken()}`
+      },
+      body: JSON.stringify({ action, params })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Browser action failed: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  private getAuthToken(): string {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('accessToken') || '';
+    }
+    return '';
   }
 }

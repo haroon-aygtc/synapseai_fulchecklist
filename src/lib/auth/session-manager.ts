@@ -28,7 +28,7 @@ class RedisSessionManager {
     });
 
     this.redis.on('connect', () => {
-      console.log('Redis connected successfully');
+      // Redis connection established successfully
     });
   }
 

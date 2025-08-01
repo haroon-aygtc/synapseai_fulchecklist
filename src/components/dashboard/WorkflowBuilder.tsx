@@ -73,7 +73,20 @@ import {
   Activity
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth/auth-context';
+import { usePermissions } from '@/lib/auth/permissions';
+import { toast } from '@/components/ui/use-toast';
 
+// Production API service integration - no more mock data
+import workflowApiService, { 
+  WorkflowData as ApiWorkflowData, 
+  CreateWorkflowRequest, 
+  UpdateWorkflowRequest,
+  WorkflowExecution,
+  WorkflowNode as ApiWorkflowNode
+} from '@/lib/services/workflow-api-service';
+
+// Local interfaces for compatibility with existing UI
 interface WorkflowNode {
   id: string;
   type: 'start' | 'agent' | 'tool' | 'condition' | 'loop' | 'end' | 'webhook' | 'api' | 'database';
@@ -123,65 +136,14 @@ const nodeTypes = {
   database: { icon: Database, color: 'bg-teal-500', label: 'Database' }
 };
 
-const mockWorkflows: WorkflowData[] = [
-  {
-    id: '1',
-    name: 'Customer Support Pipeline',
-    description: 'Automated customer support workflow with escalation',
-    nodes: [
-      {
-        id: 'start-1',
-        type: 'start',
-        name: 'New Ticket',
-        position: { x: 100, y: 100 },
-        data: {},
-        inputs: [],
-        outputs: ['output-1']
-      },
-      {
-        id: 'agent-1',
-        type: 'agent',
-        name: 'Support Bot',
-        position: { x: 300, y: 100 },
-        data: { agentId: 'support-bot-1' },
-        inputs: ['input-1'],
-        outputs: ['output-1', 'output-2']
-      },
-      {
-        id: 'condition-1',
-        type: 'condition',
-        name: 'Resolution Check',
-        position: { x: 500, y: 100 },
-        data: { condition: 'confidence > 0.8' },
-        inputs: ['input-1'],
-        outputs: ['output-1', 'output-2']
-      }
-    ],
-    connections: [
-      {
-        id: 'conn-1',
-        source: 'start-1',
-        target: 'agent-1'
-      },
-      {
-        id: 'conn-2',
-        source: 'agent-1',
-        target: 'condition-1'
-      }
-    ],
-    status: 'active',
-    createdAt: '2024-01-15',
-    updatedAt: '2024-01-20',
-    createdBy: 'John Doe',
-    executions: 1247,
-    successRate: 94.2,
-    avgExecutionTime: 3.4,
-    tags: ['customer-support', 'automation', 'escalation']
-  }
-];
+// Production API service integration - no more mock data
 
 export default function WorkflowBuilder() {
-  const [workflows, setWorkflows] = useState<WorkflowData[]>(mockWorkflows);
+  const { user, organization } = useAuth();
+  const { hasPermission } = usePermissions();
+  
+  // State management - real data only
+  const [workflows, setWorkflows] = useState<WorkflowData[]>([]);
   const [selectedWorkflow, setSelectedWorkflow] = useState<WorkflowData | null>(null);
   const [isBuilderMode, setIsBuilderMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -189,6 +151,146 @@ export default function WorkflowBuilder() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [selectedNode, setSelectedNode] = useState<WorkflowNode | null>(null);
   const [draggedNodeType, setDraggedNodeType] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load workflows on component mount and organization change
+  useEffect(() => {
+    if (organization?.id) {
+      loadWorkflows();
+    }
+  }, [organization?.id]);
+
+  // Helper function to convert API workflow to local interface
+  const convertApiWorkflowToLocal = (apiWorkflow: ApiWorkflowData): WorkflowData => {
+    return {
+      id: apiWorkflow.id,
+      name: apiWorkflow.name,
+      description: apiWorkflow.description,
+      nodes: apiWorkflow.nodes.map(node => ({
+        id: node.id,
+        type: node.type as WorkflowNode['type'],
+        name: node.name,
+        position: node.position,
+        data: node.data,
+        inputs: node.inputs,
+        outputs: node.outputs
+      })),
+      connections: apiWorkflow.edges.map(edge => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        label: edge.label
+      })),
+      status: apiWorkflow.status as WorkflowData['status'],
+      createdAt: apiWorkflow.createdAt,
+      updatedAt: apiWorkflow.updatedAt,
+      createdBy: apiWorkflow.createdBy,
+      executions: apiWorkflow.usage.executions,
+      successRate: apiWorkflow.usage.successRate,
+      avgExecutionTime: apiWorkflow.usage.avgDuration,
+      tags: apiWorkflow.tags
+    };
+  };
+
+  const loadWorkflows = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const response = await workflowApiService.getWorkflows({
+        organizationId: organization?.id || '',
+        includeNodes: true,
+        includeExecutions: true,
+        limit: 100,
+        sortBy: 'updatedAt',
+        sortOrder: 'desc'
+      });
+      
+      const localWorkflows = response.workflows.map(convertApiWorkflowToLocal);
+      setWorkflows(localWorkflows);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load workflows';
+      setError(errorMessage);
+      toast({
+        title: 'Loading Failed',
+        description: errorMessage,
+        variant: 'destructive'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Real workflow operations
+  const handleCreateWorkflow = async (workflowData: CreateWorkflowRequest) => {
+    try {
+      const apiWorkflow = await workflowApiService.createWorkflow(workflowData);
+      const localWorkflow = convertApiWorkflowToLocal(apiWorkflow);
+      setWorkflows(prev => [localWorkflow, ...prev]);
+      setShowCreateDialog(false);
+    } catch (error) {
+      // Error handling is done in the service
+    }
+  };
+
+  const handleUpdateWorkflow = async (workflowId: string, updates: UpdateWorkflowRequest) => {
+    try {
+      const apiWorkflow = await workflowApiService.updateWorkflow(workflowId, updates);
+      const localWorkflow = convertApiWorkflowToLocal(apiWorkflow);
+      setWorkflows(prev => prev.map(workflow => 
+        workflow.id === workflowId ? localWorkflow : workflow
+      ));
+      if (selectedWorkflow?.id === workflowId) {
+        setSelectedWorkflow(localWorkflow);
+      }
+    } catch (error) {
+      // Error handling is done in the service
+    }
+  };
+
+  const handleDeleteWorkflow = async (workflowId: string) => {
+    try {
+      await workflowApiService.deleteWorkflow(workflowId);
+      setWorkflows(prev => prev.filter(workflow => workflow.id !== workflowId));
+      if (selectedWorkflow?.id === workflowId) {
+        setSelectedWorkflow(null);
+        setIsBuilderMode(false);
+      }
+    } catch (error) {
+      // Error handling is done in the service
+    }
+  };
+
+  const handleExecuteWorkflow = async (workflowId: string, input?: Record<string, any>) => {
+    try {
+      const execution = await workflowApiService.executeWorkflow(workflowId, {
+        input: input || {},
+        triggeredBy: user?.id || 'unknown',
+        priority: 'normal'
+      });
+      
+      toast({
+        title: 'Workflow Execution Started',
+        description: `Execution ${execution.id} is now running.`
+      });
+      
+      return execution;
+    } catch (error) {
+      // Error handling is done in the service
+      throw error;
+    }
+  };
+
+  const handleDuplicateWorkflow = async (workflowId: string) => {
+    try {
+      const apiWorkflow = await workflowApiService.duplicateWorkflow(workflowId);
+      const localWorkflow = convertApiWorkflowToLocal(apiWorkflow);
+      setWorkflows(prev => [localWorkflow, ...prev]);
+    } catch (error) {
+      // Error handling is done in the service
+    }
+  };
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [canvasScale, setCanvasScale] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
@@ -239,7 +341,7 @@ export default function WorkflowBuilder() {
     );
   };
 
-  const handleCreateWorkflow = () => {
+  const handleCreateWorkflowLocal = () => {
     const workflow: WorkflowData = {
       id: Date.now().toString(),
       ...newWorkflow,
@@ -830,7 +932,25 @@ export default function WorkflowBuilder() {
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleCreateWorkflow} disabled={!newWorkflow.name || !newWorkflow.description}>
+            <Button 
+              onClick={() => handleCreateWorkflow({
+                name: newWorkflow.name,
+                description: newWorkflow.description,
+                tags: newWorkflow.tags,
+                nodes: [],
+                edges: [],
+                triggers: [],
+                settings: {
+                  timeout: 300000,
+                  retryPolicy: {
+                    maxRetries: 3,
+                    backoffStrategy: 'exponential'
+                  },
+                  errorHandling: 'stop'
+                }
+              })} 
+              disabled={!newWorkflow.name || !newWorkflow.description}
+            >
               Create Workflow
             </Button>
           </DialogFooter>

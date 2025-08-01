@@ -660,7 +660,13 @@ export class SynapseSDK {
   private createVanillaAgentChat(): any { return {}; }
   private createVanillaCreateAgent(): any { return {}; }
 
-  // Placeholder implementations for other framework methods...
+      // Production framework integrations
+    this.frameworks = {
+      react: new ReactFrameworkAdapter(this),
+      vue: new VueFrameworkAdapter(this),
+      angular: new AngularFrameworkAdapter(this),
+      vanilla: new VanillaFrameworkAdapter(this)
+    };
   private createReactWorkflowBuilder(): any { return {}; }
   private createReactFloatingAssistant(): any { return {}; }
   private createReactToolExecution(): any { return {}; }

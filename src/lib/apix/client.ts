@@ -126,7 +126,7 @@ class ApixClient implements ApixClientInterface {
         this.setupEventHandlers();
 
         this.socket.on('connect', () => {
-          console.log('APIX connected');
+          // APIX connection established
           this.setStatus('connected');
           this.reconnectAttempts = 0;
           this.startHeartbeat();
@@ -142,7 +142,7 @@ class ApixClient implements ApixClientInterface {
         });
 
         this.socket.on('disconnect', (reason) => {
-          console.log('APIX disconnected:', reason);
+          // APIX connection closed
           this.setStatus('disconnected');
           this.stopHeartbeat();
           
@@ -184,25 +184,25 @@ class ApixClient implements ApixClientInterface {
 
     // Handle room events
     this.socket.on('room_joined', (roomId: string) => {
-      console.log(`Joined room: ${roomId}`);
+      // Joined room successfully
     });
 
     this.socket.on('room_left', (roomId: string) => {
-      console.log(`Left room: ${roomId}`);
+      // Left room successfully
     });
 
     // Handle connection events
     this.socket.on('connected', (data: any) => {
-      console.log('APIX connection established:', data);
+      // Connection established with server
     });
 
     // Handle subscription confirmations
     this.socket.on('subscribed', (data: { subscriptionId: string }) => {
-      console.log(`Subscription confirmed: ${data.subscriptionId}`);
+      // Subscription confirmed
     });
 
     this.socket.on('unsubscribed', (data: { subscriptionId: string }) => {
-      console.log(`Unsubscription confirmed: ${data.subscriptionId}`);
+      // Unsubscription confirmed
     });
 
     // Handle errors
@@ -579,7 +579,7 @@ class ApixClient implements ApixClientInterface {
     
     setTimeout(() => {
       if (!this.socket?.connected && this.currentToken) {
-        console.log(`Reconnection attempt ${this.reconnectAttempts}`);
+        // Attempting reconnection
         this.connect(this.currentToken, this.currentOrganizationId).catch(console.error);
       }
     }, delay);
