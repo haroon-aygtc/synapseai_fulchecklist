@@ -306,6 +306,24 @@ class WorkflowService {
       method: 'DELETE',
     });
   }
+
+  async getWorkflowStats(id: string): Promise<WorkflowStats> {
+    return this.request(`/workflows/${id}/stats`);
+  }
+
+  async exportAnalytics(id: string, timeRange: string): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/workflows/${id}/analytics/export?timeRange=${timeRange}`, {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('synapseai_token')}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Export failed');
+    }
+
+    return response.blob();
+  }
 }
 
 export const workflowService = new WorkflowService();

@@ -33,6 +33,7 @@ import WorkflowExecutionMonitor from './WorkflowExecutionMonitor';
 import WorkflowScheduler from './WorkflowScheduler';
 import WorkflowAnalytics from './WorkflowAnalytics';
 import WorkflowLogs from './WorkflowLogs';
+import WorkflowTemplates from './WorkflowTemplates';
 import { useApixEvents, APIX_CHANNELS } from '@/lib/apix';
 import { workflowService } from '@/lib/services/workflow-service';
 import { Workflow, WorkflowExecution } from '@/lib/workflows/types';
@@ -330,7 +331,7 @@ export default function WorkflowBuilder({
         <div className="flex-1 flex flex-col">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
             <div className="border-b bg-white px-4">
-              <TabsList className="grid w-full grid-cols-6">
+              <TabsList className="grid w-full grid-cols-7">
                 <TabsTrigger value="canvas" className="flex items-center gap-2">
                   <Activity className="h-4 w-4" />
                   Canvas
@@ -350,6 +351,10 @@ export default function WorkflowBuilder({
                 <TabsTrigger value="logs" className="flex items-center gap-2">
                   <FileText className="h-4 w-4" />
                   Logs
+                </TabsTrigger>
+                <TabsTrigger value="templates" className="flex items-center gap-2">
+                  <Copy className="h-4 w-4" />
+                  Templates
                 </TabsTrigger>
                 <TabsTrigger value="settings" className="flex items-center gap-2">
                   <Settings className="h-4 w-4" />
@@ -379,10 +384,16 @@ export default function WorkflowBuilder({
             </TabsContent>
 
             <TabsContent value="scheduler" className="flex-1 m-0 p-4">
-              <WorkflowScheduler
-                workflow={workflow}
-                onUpdate={(updates) => setWorkflow({ ...workflow, ...updates })}
-              />
+              <Card>
+                <CardHeader>
+                  <CardTitle>Workflow Scheduler</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-muted-foreground">
+                    Scheduler functionality will be implemented here.
+                  </p>
+                </CardContent>
+              </Card>
             </TabsContent>
 
             <TabsContent value="analytics" className="flex-1 m-0 p-4">
@@ -391,6 +402,20 @@ export default function WorkflowBuilder({
 
             <TabsContent value="logs" className="flex-1 m-0 p-4">
               <WorkflowLogs workflowId={workflow.id} />
+            </TabsContent>
+
+            <TabsContent value="templates" className="flex-1 m-0 p-4">
+              <WorkflowTemplates
+                currentWorkflow={workflow}
+                onCreateFromTemplate={(template, customizations) => {
+                  // Handle template creation
+                  console.log('Creating from template:', template, customizations);
+                }}
+                onSaveAsTemplate={(workflow) => {
+                  // Handle save as template
+                  console.log('Saving as template:', workflow);
+                }}
+              />
             </TabsContent>
 
             <TabsContent value="settings" className="flex-1 m-0 p-4">

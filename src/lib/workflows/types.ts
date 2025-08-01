@@ -300,6 +300,40 @@ export interface WorkflowStats {
   updatedAt: Date;
 }
 
+export interface WorkflowSettings {
+  executionTimeout: number;
+  maxConcurrentExecutions: number;
+  retryOnFailure: boolean;
+  logLevel: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+  notifyOnCompletion: boolean;
+  notifyOnFailure: boolean;
+  notificationChannels: string[];
+}
+
+export interface WorkflowAnalytics {
+  executionTrends: Array<{
+    date: string;
+    executions: number;
+    successes: number;
+    failures: number;
+    avgDuration: number;
+    cost: number;
+  }>;
+  peakExecutionsPerHour: number;
+  mostActiveHour: string;
+  nodeNames: Record<string, string>;
+  nodeTypes: Record<string, string>;
+  nodeCosts: Record<string, number>;
+  errorLastOccurrence: Record<string, Date>;
+  errorTrends: Record<string, 'increasing' | 'decreasing' | 'stable'>;
+  costBreakdown: Array<{
+    category: string;
+    amount: number;
+    percentage: number;
+    trend: number;
+  }>;
+}
+
 // Zod schemas for validation
 export const workflowNodeSchema = z.object({
   id: z.string(),
