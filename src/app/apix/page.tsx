@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * APIX Dashboard Page
  * 

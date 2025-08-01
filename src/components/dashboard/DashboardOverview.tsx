@@ -81,7 +81,7 @@ import dashboardApiService, {
   RecentActivity as ApiRecentActivity 
 } from '@/lib/services/dashboard-api-service';
 
-export default function DashboardOverview() {
+export function DashboardOverview() {
   const { user, organization, hasPermission } = useAuth();
   const router = useRouter();
   
@@ -487,3 +487,6 @@ export default function DashboardOverview() {
     </div>
   );
 }
+
+// Export as default for compatibility
+export default DashboardOverview;

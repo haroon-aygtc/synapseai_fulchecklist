@@ -318,43 +318,31 @@ export class ToolService {
     const startTime = Date.now();
     
     try {
-      // Create secure execution context
-      const vm = require('vm');
-      const sandbox = {
-        input,
-        output: null,
-        console: {
-          log: (...args: any[]) => {
-          // Tool execution logging - replace with proper logger in production
-          if (process.env.NODE_ENV === 'development') {
-            console.log(`[Tool ${tool.id}]`, ...args);
-          }
+      // Create secure execution context using API endpoint
+      const response = await fetch('/api/tools/execute-function', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`
         },
-          error: (...args: any[]) => console.error(`[Tool ${tool.id}]`, ...args)
-        },
-        require: (module: string) => {
-          // Whitelist allowed modules
-          const allowedModules = ['lodash', 'moment', 'axios', 'crypto'];
-          if (allowedModules.includes(module)) {
-            return require(module);
-          }
-          throw new Error(`Module ${module} is not allowed`);
-        }
-      };
-
-      const context = vm.createContext(sandbox);
-      const script = new vm.Script(tool.code);
-      
-      // Execute with timeout
-      script.runInContext(context, {
-        timeout: execution.metadata.timeout || 30000,
-        displayErrors: true
+        body: JSON.stringify({
+          code: tool.code,
+          input,
+          timeout: execution.metadata.timeout || 30000
+        })
       });
 
-      execution.resourceUsage.cpuTime = Date.now() - startTime;
-      execution.resourceUsage.memoryUsage = process.memoryUsage().heapUsed;
+      if (!response.ok) {
+        throw new Error(`Function execution failed: ${response.statusText}`);
+      }
 
-      return sandbox.output;
+      const result = await response.json();
+      
+      execution.resourceUsage.cpuTime = Date.now() - startTime;
+      execution.resourceUsage.memoryUsage = result.memoryUsage || 0;
+      execution.resourceUsage.networkCalls = 1;
+
+      return result.output;
 
     } catch (error) {
       execution.resourceUsage.cpuTime = Date.now() - startTime;
@@ -371,13 +359,12 @@ export class ToolService {
       throw new Error('REST API tool requires endpoint');
     }
 
-    const axios = require('axios');
     const startTime = Date.now();
 
     try {
       const config = tool.config || {};
       const method = config.method || 'POST';
-      const headers = {
+      const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         ...config.headers
       };
@@ -391,35 +378,32 @@ export class ToolService {
         }
       }
 
-      const requestConfig = {
+      const requestConfig: RequestInit = {
         method,
-        url: tool.endpoint,
         headers,
-        timeout: execution.metadata.timeout || 30000,
-        data: method !== 'GET' ? input : undefined,
-        params: method === 'GET' ? input : undefined
+        body: method !== 'GET' ? JSON.stringify(input) : undefined,
       };
 
       execution.resourceUsage.networkCalls = 1;
       
-      const response = await axios(requestConfig);
+      const response = await fetch(tool.endpoint, requestConfig);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const responseData = await response.json();
       
       execution.resourceUsage.cpuTime = Date.now() - startTime;
-      execution.resourceUsage.storageUsed = JSON.stringify(response.data).length;
+      execution.resourceUsage.storageUsed = JSON.stringify(responseData).length;
 
-      return response.data;
+      return responseData;
 
     } catch (error) {
       execution.resourceUsage.cpuTime = Date.now() - startTime;
       execution.resourceUsage.networkCalls = 1;
       
-      if (error.response) {
-        throw new Error(`HTTP ${error.response.status}: ${error.response.data?.message || error.response.statusText}`);
-      } else if (error.request) {
-        throw new Error('Network error: No response received');
-      } else {
-        throw error;
-      }
+      throw error;
     }
   }
 
@@ -439,8 +423,27 @@ export class ToolService {
         throw new Error('Knowledge base ID is required for RAG retrieval');
       }
 
-      // Real vector search implementation
-      const searchResults = await this.performRealVectorSearch(query, config);
+      // Real vector search implementation via API
+      const response = await fetch('/api/knowledge/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`
+        },
+        body: JSON.stringify({
+          query,
+          knowledgeBaseId: config.knowledgeBaseId,
+          limit: config.limit || 5,
+          threshold: config.threshold || 0.7,
+          filters: config.filters || {}
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Vector search failed: ${response.statusText}`);
+      }
+
+      const searchResults = await response.json();
       
       execution.resourceUsage.cpuTime = Date.now() - startTime;
       execution.resourceUsage.memoryUsage = process.memoryUsage().heapUsed;
@@ -465,56 +468,56 @@ export class ToolService {
     }
   }
 
-  // PRODUCTION FIX: Real Browser Automation
+  // PRODUCTION FIX: Real Browser Automation via API
   private async executeBrowserAutomationTool(
     tool: ToolDefinition,
     input: any,
     execution: ToolExecution
   ): Promise<any> {
     const startTime = Date.now();
-    let browser = null;
-    let page = null;
 
     try {
       const actions = input.actions || [];
-      const results = [];
+      
+      const response = await fetch('/api/browser/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`
+        },
+        body: JSON.stringify({
+          actions,
+          timeout: execution.metadata.timeout || 30000
+        })
+      });
 
-      // Get browser from pool or create new one
-      browser = await this.getBrowserFromPool();
-      page = await browser.newPage();
-
-      // Set realistic viewport and user agent
-      await page.setViewport({ width: 1920, height: 1080 });
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-
-      for (const action of actions) {
-        const actionResult = await this.performRealBrowserAction(page, action);
-        results.push(actionResult);
+      if (!response.ok) {
+        throw new Error(`Browser automation failed: ${response.statusText}`);
       }
+
+      const result = await response.json();
 
       execution.resourceUsage.cpuTime = Date.now() - startTime;
       execution.resourceUsage.memoryUsage = process.memoryUsage().heapUsed;
+      execution.resourceUsage.networkCalls = 1;
 
       return {
         actions: actions.length,
-        results,
+        results: result.results,
         metadata: {
           executionTime: Date.now() - startTime,
-          browserVersion: await browser.version(),
-          userAgent: await page.evaluate(() => navigator.userAgent)
+          browserVersion: result.browserVersion,
+          userAgent: result.userAgent
         }
       };
 
     } catch (error) {
       execution.resourceUsage.cpuTime = Date.now() - startTime;
       throw error;
-    } finally {
-      if (page) await page.close();
-      if (browser) await this.returnBrowserToPool(browser);
     }
   }
 
-  // PRODUCTION FIX: Real Database Query Implementation
+  // PRODUCTION FIX: Real Database Query Implementation via API
   private async executeDatabaseQueryTool(
     tool: ToolDefinition,
     input: any,
@@ -531,28 +534,29 @@ export class ToolService {
         throw new Error('Database query tool requires query parameter');
       }
 
-      if (!config.connectionString && !config.database) {
-        throw new Error('Database connection configuration is required');
+      const response = await fetch('/api/database/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`
+        },
+        body: JSON.stringify({
+          query,
+          params,
+          config: {
+            type: config.type,
+            timeout: config.timeout || 30000,
+            maxRows: config.maxRows || 1000,
+            organizationId: execution.metadata.organizationId
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Database query failed: ${response.statusText}`);
       }
 
-      // Real database execution based on type
-      let results;
-      switch (config.type) {
-        case 'postgresql':
-          results = await this.executePostgreSQLQuery(config, query, params);
-          break;
-        case 'mysql':
-          results = await this.executeMySQLQuery(config, query, params);
-          break;
-        case 'mongodb':
-          results = await this.executeMongoDBQuery(config, query, params);
-          break;
-        case 'redis':
-          results = await this.executeRedisQuery(config, query, params);
-          break;
-        default:
-          throw new Error(`Unsupported database type: ${config.type}`);
-      }
+      const result = await response.json();
 
       execution.resourceUsage.cpuTime = Date.now() - startTime;
       execution.resourceUsage.memoryUsage = process.memoryUsage().heapUsed;
@@ -561,8 +565,8 @@ export class ToolService {
       return {
         query,
         parameters: params,
-        results: results.rows || results,
-        rowCount: results.rowCount || (Array.isArray(results) ? results.length : 1),
+        results: result.data,
+        rowCount: Array.isArray(result.data) ? result.data.length : 1,
         executionTime: Date.now() - startTime,
         databaseType: config.type
       };
@@ -570,331 +574,6 @@ export class ToolService {
     } catch (error) {
       execution.resourceUsage.cpuTime = Date.now() - startTime;
       throw error;
-    }
-  }
-
-  // PRODUCTION FIX: Real Vector Search Implementation
-  private async performRealVectorSearch(query: string, config: any): Promise<any> {
-    try {
-      // Initialize vector store if not already done
-      if (!this.vectorStore) {
-        await this.initializeVectorStore();
-      }
-
-      // Generate embeddings for the query
-      const queryEmbedding = await this.generateEmbedding(query);
-
-      // Perform similarity search
-      const searchResults = await this.vectorStore!.similaritySearch(
-        queryEmbedding,
-        config.limit || 5,
-        config.threshold || 0.7,
-        {
-          knowledgeBaseId: config.knowledgeBaseId,
-          filters: config.filters || {}
-        }
-      );
-
-      return searchResults;
-    } catch (error) {
-      throw new Error(`Vector search failed: ${error.message}`);
-    }
-  }
-
-  // PRODUCTION FIX: Real Browser Action Implementation
-  private async performRealBrowserAction(page: any, action: any): Promise<any> {
-    const startTime = Date.now();
-
-    try {
-      switch (action.type) {
-        case 'navigate':
-          await page.goto(action.url, { 
-            waitUntil: 'networkidle2',
-            timeout: action.timeout || 30000
-          });
-          return {
-            type: 'navigate',
-            url: action.url,
-            finalUrl: page.url(),
-            title: await page.title(),
-            success: true,
-            duration: Date.now() - startTime
-          };
-
-        case 'click':
-          await page.waitForSelector(action.selector, { timeout: action.timeout || 10000 });
-          await page.click(action.selector);
-          return {
-            type: 'click',
-            selector: action.selector,
-            success: true,
-            duration: Date.now() - startTime
-          };
-
-        case 'type':
-          await page.waitForSelector(action.selector, { timeout: action.timeout || 10000 });
-          await page.type(action.selector, action.text, { delay: action.delay || 50 });
-          return {
-            type: 'type',
-            selector: action.selector,
-            text: action.text,
-            success: true,
-            duration: Date.now() - startTime
-          };
-
-        case 'screenshot':
-          const screenshot = await page.screenshot({
-            type: action.format || 'png',
-            fullPage: action.fullPage || false,
-            quality: action.quality || 80
-          });
-          return {
-            type: 'screenshot',
-            screenshot: screenshot.toString('base64'),
-            success: true,
-            duration: Date.now() - startTime
-          };
-
-        case 'extract_text':
-          const text = await page.evaluate((selector) => {
-            if (selector) {
-              const element = document.querySelector(selector);
-              return element ? element.textContent : null;
-            }
-            return document.body.textContent;
-          }, action.selector);
-          return {
-            type: 'extract_text',
-            selector: action.selector,
-            text,
-            success: true,
-            duration: Date.now() - startTime
-          };
-
-        case 'wait':
-          if (action.selector) {
-            await page.waitForSelector(action.selector, { timeout: action.timeout || 10000 });
-          } else {
-            await page.waitForTimeout(action.duration || 1000);
-          }
-          return {
-            type: 'wait',
-            selector: action.selector,
-            duration: action.duration,
-            success: true,
-            actualDuration: Date.now() - startTime
-          };
-
-        case 'evaluate':
-          const result = await page.evaluate(action.script);
-          return {
-            type: 'evaluate',
-            script: action.script,
-            result,
-            success: true,
-            duration: Date.now() - startTime
-          };
-
-        default:
-          throw new Error(`Unsupported browser action: ${action.type}`);
-      }
-    } catch (error) {
-      return {
-        type: action.type,
-        error: error.message,
-        success: false,
-        duration: Date.now() - startTime
-      };
-    }
-  }
-
-  // PRODUCTION FIX: Real Database Query Implementations
-  private async executePostgreSQLQuery(config: any, query: string, params: any[]): Promise<any> {
-    const { Pool } = require('pg');
-    const pool = new Pool({
-      connectionString: config.connectionString,
-      ssl: config.ssl || false,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
-    });
-
-    try {
-      const client = await pool.connect();
-      const result = await client.query(query, params);
-      client.release();
-      return result;
-    } finally {
-      await pool.end();
-    }
-  }
-
-  private async executeMySQLQuery(config: any, query: string, params: any[]): Promise<any> {
-    const mysql = require('mysql2/promise');
-    const connection = await mysql.createConnection({
-      host: config.host,
-      user: config.user,
-      password: config.password,
-      database: config.database,
-      port: config.port || 3306,
-      ssl: config.ssl || false
-    });
-
-    try {
-      const [rows, fields] = await connection.execute(query, params);
-      return { rows, fields, rowCount: Array.isArray(rows) ? rows.length : 1 };
-    } finally {
-      await connection.end();
-    }
-  }
-
-  private async executeMongoDBQuery(config: any, query: string, params: any[]): Promise<any> {
-    const { MongoClient } = require('mongodb');
-    const client = new MongoClient(config.connectionString);
-
-    try {
-      await client.connect();
-      const db = client.db(config.database);
-      const collection = db.collection(config.collection);
-
-      // Parse query as MongoDB operation
-      const operation = JSON.parse(query);
-      let result;
-
-      switch (operation.type) {
-        case 'find':
-          result = await collection.find(operation.filter || {}).limit(operation.limit || 100).toArray();
-          break;
-        case 'findOne':
-          result = await collection.findOne(operation.filter || {});
-          break;
-        case 'insertOne':
-          result = await collection.insertOne(operation.document);
-          break;
-        case 'updateOne':
-          result = await collection.updateOne(operation.filter, operation.update);
-          break;
-        case 'deleteOne':
-          result = await collection.deleteOne(operation.filter);
-          break;
-        case 'aggregate':
-          result = await collection.aggregate(operation.pipeline).toArray();
-          break;
-        default:
-          throw new Error(`Unsupported MongoDB operation: ${operation.type}`);
-      }
-
-      return { rows: result, rowCount: Array.isArray(result) ? result.length : 1 };
-    } finally {
-      await client.close();
-    }
-  }
-
-  private async executeRedisQuery(config: any, query: string, params: any[]): Promise<any> {
-    const Redis = require('ioredis');
-    const redis = new Redis({
-      host: config.host,
-      port: config.port || 6379,
-      password: config.password,
-      db: config.db || 0
-    });
-
-    try {
-      // Parse query as Redis command
-      const command = JSON.parse(query);
-      const result = await redis[command.operation](...(command.args || []));
-      return { rows: [result], rowCount: 1 };
-    } finally {
-      redis.disconnect();
-    }
-  }
-
-  // PRODUCTION FIX: Real Vector Store Implementation
-  private async initializeVectorStore(): Promise<void> {
-    try {
-      this.vectorStore = new VectorStoreService({
-        apiKey: process.env.VECTOR_DB_API_KEY,
-        environment: process.env.VECTOR_DB_ENVIRONMENT,
-        indexName: process.env.VECTOR_DB_INDEX
-      });
-      await this.vectorStore.initialize();
-    } catch (error) {
-      console.warn('Vector store initialization failed, using fallback:', error.message);
-      // Fallback to in-memory vector store
-      this.vectorStore = new InMemoryVectorStore();
-    }
-  }
-
-  // PRODUCTION FIX: Real Browser Pool Implementation
-  private async initializeBrowserPool(): Promise<void> {
-    try {
-      this.browserPool = new BrowserPoolService({
-        maxBrowsers: 3,
-        launchOptions: {
-          headless: true,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu'
-          ]
-        }
-      });
-      await this.browserPool.initialize();
-    } catch (error) {
-      console.warn('Browser pool initialization failed:', error.message);
-    }
-  }
-
-  // Browser Pool Management
-  private async getBrowserFromPool(): Promise<any> {
-    if (this.browserPool) {
-      return await this.browserPool.getBrowser();
-    }
-    
-    // Fallback: create new browser
-    const puppeteer = require('puppeteer');
-    return await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-  }
-
-  private async returnBrowserToPool(browser: any): Promise<void> {
-    if (this.browserPool) {
-      await this.browserPool.returnBrowser(browser);
-    } else {
-      await browser.close();
-    }
-  }
-
-  // PRODUCTION FIX: Real Embedding Generation
-  private async generateEmbedding(text: string): Promise<number[]> {
-    try {
-      // Use OpenAI embeddings or local model
-      const response = await fetch('https://api.openai.com/v1/embeddings', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          input: text,
-          model: 'text-embedding-ada-002'
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Embedding API failed: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      return data.data[0].embedding;
-    } catch (error) {
-      throw new Error(`Embedding generation failed: ${error.message}`);
     }
   }
 
@@ -917,7 +596,7 @@ export class ToolService {
         execution.retryCount = attempt;
         return await this.executeToolByType(tool, input, execution);
       } catch (error) {
-        lastError = error;
+        lastError = error as Error;
         
         // Check if error is retryable
         if (retryPolicy && this.isRetryableError(error, retryPolicy.retryableErrors)) {
@@ -964,7 +643,7 @@ export class ToolService {
     try {
       return tool.inputSchema.parse(input);
     } catch (error) {
-      throw new Error(`Input validation failed: ${error.message}`);
+      throw new Error(`Input validation failed: ${(error as Error).message}`);
     }
   }
 
@@ -973,7 +652,7 @@ export class ToolService {
       return tool.outputSchema.parse(output);
     } catch (error) {
       // Log validation error but don't fail the execution
-      console.warn(`Output validation failed for tool ${tool.id}:`, error.message);
+      console.warn(`Output validation failed for tool ${tool.id}:`, (error as Error).message);
       return output;
     }
   }
@@ -1055,182 +734,6 @@ export class ToolService {
     metrics.successRate = ((metrics.successRate * (metrics.totalExecutions - 1)) + (successCount * 100)) / metrics.totalExecutions;
   }
 
-  // Production implementations for external services
-  private async performVectorSearch(query: string, config: any): Promise<any[]> {
-    try {
-      if (!this.vectorStore) {
-        throw new Error('Vector store not initialized');
-      }
-
-      // Generate embedding for the query
-      const embedding = await this.vectorStore.generateEmbedding(query);
-      
-      // Perform similarity search
-      const results = await this.vectorStore.similaritySearch({
-        vector: embedding,
-        topK: config.limit || 10,
-        threshold: config.threshold || 0.7,
-        filters: config.filters || {},
-        includeMetadata: true
-      });
-
-      return results.map(result => ({
-        id: result.id,
-        content: result.metadata.content || result.content,
-        score: result.score,
-        metadata: result.metadata,
-        source: result.metadata.source,
-        timestamp: result.metadata.timestamp
-      }));
-    } catch (error) {
-      this.logger?.error(`Vector search failed: ${error.message}`);
-      throw new Error(`Vector search execution failed: ${error.message}`);
-    }
-  }
-
-  private async performBrowserAction(action: any): Promise<any> {
-    try {
-      if (!this.browserPool) {
-        throw new Error('Browser pool not initialized');
-      }
-
-      const browser = await this.browserPool.getBrowser();
-      const page = await browser.newPage();
-
-      try {
-        await page.setViewport({ width: 1920, height: 1080 });
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-
-        switch (action.type) {
-          case 'navigate':
-            await page.goto(action.url, { 
-              waitUntil: 'networkidle2',
-              timeout: action.timeout || 30000 
-            });
-            return { 
-              success: true, 
-              url: page.url(),
-              title: await page.title(),
-              timestamp: new Date().toISOString()
-            };
-
-          case 'screenshot':
-            const screenshot = await page.screenshot({ 
-              encoding: 'base64',
-              fullPage: action.fullPage || false,
-              quality: action.quality || 90
-            });
-            return { 
-              success: true, 
-              data: screenshot,
-              dimensions: await page.evaluate(() => ({
-                width: window.innerWidth,
-                height: window.innerHeight
-              }))
-            };
-
-          case 'extract':
-            const extractedData = await page.evaluate((selector) => {
-              const elements = document.querySelectorAll(selector);
-              return Array.from(elements).map(el => ({
-                text: el.textContent?.trim(),
-                html: el.innerHTML,
-                attributes: Object.fromEntries(
-                  Array.from(el.attributes).map(attr => [attr.name, attr.value])
-                )
-              }));
-            }, action.selector);
-            return { success: true, data: extractedData };
-
-          case 'click':
-            await page.click(action.selector);
-            await page.waitForTimeout(action.wait || 1000);
-            return { 
-              success: true, 
-              message: `Clicked element: ${action.selector}`,
-              url: page.url()
-            };
-
-          case 'type':
-            await page.type(action.selector, action.text);
-            return { 
-              success: true, 
-              message: `Typed text into: ${action.selector}`
-            };
-
-          case 'wait':
-            await page.waitForSelector(action.selector, {
-              timeout: action.timeout || 10000
-            });
-            return { 
-              success: true, 
-              message: `Element found: ${action.selector}`
-            };
-
-          default:
-            throw new Error(`Unsupported browser action: ${action.type}`);
-        }
-      } finally {
-        await page.close();
-        await this.browserPool.releaseBrowser(browser);
-      }
-    } catch (error) {
-      this.logger?.error(`Browser action failed: ${error.message}`);
-      throw new Error(`Browser automation failed: ${error.message}`);
-    }
-  }
-
-  private async executeDbQuery(query: string, params: any[], config: any): Promise<any> {
-    try {
-      // Validate query for security
-      const sanitizedQuery = this.sanitizeQuery(query);
-      const allowedOperations = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
-      const operation = sanitizedQuery.trim().split(' ')[0].toUpperCase();
-      
-      if (!allowedOperations.includes(operation)) {
-        throw new Error(`Unsupported database operation: ${operation}`);
-      }
-
-      // Execute query through secure API endpoint
-      const response = await fetch('/api/database/execute', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.getAuthToken()}`
-        },
-        body: JSON.stringify({
-          query: sanitizedQuery,
-          params: params || [],
-          config: {
-            timeout: config.timeout || 30000,
-            maxRows: config.maxRows || 1000,
-            organizationId: config.organizationId
-          }
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Database query failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      
-      // Log query execution for audit
-      this.auditLog({
-        action: 'DATABASE_QUERY',
-        query: query.substring(0, 100), // Truncated for security
-        recordCount: Array.isArray(result.data) ? result.data.length : 1,
-        organizationId: config.organizationId,
-        timestamp: new Date().toISOString()
-      });
-
-      return result.data;
-    } catch (error) {
-      this.logger?.error(`Database query failed: ${error.message}`);
-      throw new Error(`Database query execution failed: ${error.message}`);
-    }
-  }
-
   private evaluateCondition(condition: string, data: any): boolean {
     // Simple condition evaluation - replace with proper expression parser
     try {
@@ -1277,7 +780,11 @@ export class ToolService {
   // API Methods
   async getToolDefinition(toolId: string): Promise<ToolDefinition | null> {
     try {
-      const response = await fetch(`${this.baseUrl}/${toolId}`);
+      const response = await fetch(`${this.baseUrl}/${toolId}`, {
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`
+        }
+      });
       if (!response.ok) {
         if (response.status === 404) return null;
         throw new Error(`Failed to get tool definition: ${response.statusText}`);
@@ -1291,7 +798,11 @@ export class ToolService {
 
   async getToolExecution(executionId: string): Promise<ToolExecution | null> {
     try {
-      const response = await fetch(`${this.baseUrl}/executions/${executionId}`);
+      const response = await fetch(`${this.baseUrl}/executions/${executionId}`, {
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`
+        }
+      });
       if (!response.ok) {
         if (response.status === 404) return null;
         throw new Error(`Failed to get tool execution: ${response.statusText}`);
@@ -1326,6 +837,22 @@ export class ToolService {
     }, 3600000); // 1 hour
   }
 
+  private async initializeVectorStore(): Promise<void> {
+    try {
+      this.vectorStore = new ProductionVectorStoreService();
+    } catch (error) {
+      console.warn('Vector store initialization failed:', (error as Error).message);
+    }
+  }
+
+  private async initializeBrowserPool(): Promise<void> {
+    try {
+      this.browserPool = new ProductionBrowserPoolService();
+    } catch (error) {
+      console.warn('Browser pool initialization failed:', (error as Error).message);
+    }
+  }
+
   private cleanupOldExecutions(): void {
     const cutoffTime = Date.now() - (24 * 60 * 60 * 1000); // 24 hours ago
     
@@ -1351,181 +878,12 @@ export class ToolService {
   private generateId(): string {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
   }
-}
-
-// PRODUCTION FIX: Real Vector Store Service
-class VectorStoreService {
-  private config: any;
-  private client: any;
-
-  constructor(config: any) {
-    this.config = config;
-  }
-
-  async initialize(): Promise<void> {
-    // Initialize with actual vector database (Pinecone, Weaviate, etc.)
-    const { PineconeClient } = require('@pinecone-database/pinecone');
-    this.client = new PineconeClient();
-    await this.client.init({
-      apiKey: this.config.apiKey,
-      environment: this.config.environment
-    });
-  }
-
-  async similaritySearch(
-    queryEmbedding: number[],
-    limit: number,
-    threshold: number,
-    options: any
-  ): Promise<any> {
-    const index = this.client.Index(this.config.indexName);
-    
-    const queryRequest = {
-      vector: queryEmbedding,
-      topK: limit,
-      includeMetadata: true,
-      filter: options.filters
-    };
-
-    const queryResponse = await index.query({ queryRequest });
-    
-    return {
-      documents: queryResponse.matches.map((match: any) => ({
-        content: match.metadata.content,
-        metadata: match.metadata,
-        source: match.metadata.source
-      })),
-      scores: queryResponse.matches.map((match: any) => match.score)
-    };
-  }
-}
-
-// PRODUCTION FIX: Real Browser Pool Service
-class BrowserPoolService {
-  private browsers: any[] = [];
-  private config: any;
-  private maxBrowsers: number;
-
-  constructor(config: any) {
-    this.config = config;
-    this.maxBrowsers = config.maxBrowsers || 3;
-  }
-
-  async initialize(): Promise<void> {
-    const puppeteer = require('puppeteer');
-    
-    // Create initial browser pool
-    for (let i = 0; i < this.maxBrowsers; i++) {
-      const browser = await puppeteer.launch(this.config.launchOptions);
-      this.browsers.push(browser);
-    }
-  }
-
-  async getBrowser(): Promise<any> {
-    if (this.browsers.length > 0) {
-      return this.browsers.pop();
-    }
-    
-    // Create new browser if pool is empty
-    const puppeteer = require('puppeteer');
-    return await puppeteer.launch(this.config.launchOptions);
-  }
-
-  async returnBrowser(browser: any): Promise<void> {
-    if (this.browsers.length < this.maxBrowsers) {
-      this.browsers.push(browser);
-    } else {
-      await browser.close();
-    }
-  }
-}
-
-// In-Memory Vector Store Fallback
-class InMemoryVectorStore {
-  private documents: any[] = [];
-
-  async initialize(): Promise<void> {
-    // Load documents from local storage or API
-    try {
-      const response = await fetch('/api/knowledge/documents');
-      if (response.ok) {
-        this.documents = await response.json();
-      }
-    } catch (error) {
-      console.warn('Failed to load documents for in-memory vector store');
-    }
-  }
-
-  async similaritySearch(queryEmbedding: number[], limit: number, threshold: number, options: any): Promise<any> {
-    // Simple cosine similarity implementation
-    const results = this.documents
-      .map(doc => ({
-        ...doc,
-        score: this.cosineSimilarity(queryEmbedding, doc.embedding)
-      }))
-      .filter(doc => doc.score >= threshold)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
-
-    return {
-      documents: results,
-      scores: results.map(r => r.score)
-    };
-  }
-
-  private cosineSimilarity(a: number[], b: number[]): number {
-    const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
-    const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
-    const magnitudeB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
-    return dotProduct / (magnitudeA * magnitudeB);
-  }
-
-  // Helper methods for production implementations
-  private sanitizeQuery(query: string): string {
-    // Remove potentially dangerous SQL commands
-    const dangerousPatterns = [
-      /DROP\s+TABLE/i,
-      /DROP\s+DATABASE/i,
-      /TRUNCATE/i,
-      /ALTER\s+TABLE/i,
-      /CREATE\s+TABLE/i,
-      /EXEC\s*\(/i,
-      /EXECUTE\s*\(/i,
-      /xp_/i,
-      /sp_/i
-    ];
-
-    for (const pattern of dangerousPatterns) {
-      if (pattern.test(query)) {
-        throw new Error(`Potentially dangerous SQL operation detected`);
-      }
-    }
-
-    return query.trim();
-  }
 
   private getAuthToken(): string {
-    // Get authentication token from localStorage or context
     if (typeof window !== 'undefined') {
       return localStorage.getItem('accessToken') || '';
     }
     return '';
-  }
-
-  private auditLog(logData: any): void {
-    // Send audit log to backend
-    if (typeof window !== 'undefined') {
-      fetch('/api/audit/log', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.getAuthToken()}`
-        },
-        body: JSON.stringify(logData)
-      }).catch(error => {
-        console.error('Failed to send audit log:', error);
-      });
-    }
   }
 }
 
@@ -1597,12 +955,7 @@ class ProductionVectorStoreService implements VectorStoreService {
 }
 
 class ProductionBrowserPoolService implements BrowserPoolService {
-  private browsers: any[] = [];
-  private maxBrowsers = 5;
-
   async getBrowser(): Promise<any> {
-    // In production, this would manage a pool of browser instances
-    // For now, we'll use the browser automation API
     const response = await fetch('/api/browser/get-instance', {
       method: 'POST',
       headers: {
@@ -1649,7 +1002,6 @@ class ProductionBrowserPoolService implements BrowserPoolService {
   }
 
   async releaseBrowser(browser: any): Promise<void> {
-    // Release browser back to pool
     await fetch('/api/browser/release-instance', {
       method: 'POST',
       headers: {
@@ -1684,3 +1036,6 @@ class ProductionBrowserPoolService implements BrowserPoolService {
     return '';
   }
 }
+
+// Export the service instance
+export const toolService = new ToolService();

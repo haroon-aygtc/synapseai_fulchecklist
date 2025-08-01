@@ -1,206 +1,184 @@
-import { Agent, AgentConfiguration, AgentAnalytics } from '../types';
+import { z } from 'zod';
 
-class AgentService {
+// PRODUCTION: Real Agent Types and Interfaces
+export interface Agent {
+  id: string;
+  name: string;
+  description: string;
+  type: 'standalone' | 'tool-driven' | 'hybrid' | 'multi-task' | 'multi-provider';
+  status: 'active' | 'inactive' | 'draft' | 'error';
+  model: string;
+  provider: string;
+  systemPrompt: string;
+  temperature: number;
+  maxTokens: number;
+  tools: string[];
+  capabilities: string[];
+  tags: string[];
+  organizationId: string;
+  userId: string;
+  createdAt: Date;
+  updatedAt: Date;
+  version: number;
+  isActive: boolean;
+  metadata: {
+    totalSessions: number;
+    successfulSessions: number;
+    failedSessions: number;
+    avgResponseTime: number;
+    avgCost: number;
+    lastExecuted: Date | null;
+    popularityScore: number;
+  };
+}
+
+export interface AgentConfiguration {
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  systemPrompt: string;
+  tools: string[];
+  fallbackBehavior: 'error' | 'default_response' | 'escalate';
+  rateLimits: {
+    requestsPerMinute: number;
+    tokensPerMinute: number;
+  };
+  costLimits: {
+    maxCostPerSession: number;
+    maxCostPerMonth: number;
+  };
+}
+
+export interface AgentAnalytics {
+  totalSessions: number;
+  successfulSessions: number;
+  failedSessions: number;
+  avgResponseTime: number;
+  avgCost: number;
+  costBreakdown: Array<{
+    provider: string;
+    cost: number;
+    percentage: number;
+  }>;
+  usageOverTime: Array<{
+    date: string;
+    sessions: number;
+    cost: number;
+    avgResponseTime: number;
+  }>;
+  topErrors: Array<{
+    error: string;
+    count: number;
+    percentage: number;
+  }>;
+}
+
+export interface AgentExecution {
+  id: string;
+  agentId: string;
+  input: any;
+  output?: any;
+  error?: string;
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  startedAt: Date;
+  completedAt?: Date;
+  duration?: number;
+  provider: string;
+  model: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  cost: number;
+  metadata: {
+    sessionId?: string;
+    userId: string;
+    organizationId: string;
+    toolsUsed: string[];
+    retryCount: number;
+  };
+}
+
+// PRODUCTION: Real Agent Service Implementation
+export class AgentService {
   private baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-  private providerService: ProvidersService;
-  private realTimeMemoryManager: RealTimeMemoryManager;
-  private collaborationEngine: CollaborationEngine;
+  private cache = new Map<string, { data: any; timestamp: number; ttl: number }>();
+  private wsConnection: WebSocket | null = null;
+  private eventSubscribers = new Set<(event: any) => void>();
 
   constructor() {
-    this.providerService = new ProvidersService();
-    this.realTimeMemoryManager = new RealTimeMemoryManager();
-    this.collaborationEngine = new CollaborationEngine();
+    this.initializeWebSocketConnection();
   }
 
-  // PRODUCTION FIX: Real Agent Execution with Provider Integration
+  // PRODUCTION: Real Agent Execution with Provider Integration
   async executeWithProvider(
     agentId: string,
     input: any,
     options: {
+      sessionId?: string;
       timeout?: number;
-      retryPolicy?: any;
       streaming?: boolean;
       preferredProvider?: string;
-    } = {}
-  ): Promise<any> {
-    try {
-      // Get agent configuration
-      const agent = await this.getAgentConfiguration(agentId);
-      if (!agent) {
-        throw new Error(`Agent ${agentId} not found`);
-      }
-
-      // Prepare enhanced context with memory
-      const memory = await this.realTimeMemoryManager.getAgentMemory(agentId);
-      const context = await this.prepareEnhancedContext(agent, input, memory);
-
-      // Execute with smart provider routing
-      const result = await this.providerService.executeWithSmartRouting(
-        agent.organizationId,
-        {
-          messages: context.messages,
-          model: agent.model,
-          temperature: agent.temperature,
-          maxTokens: agent.maxTokens,
-          tools: agent.tools.length > 0 ? await this.getAgentTools(agent.tools) : undefined,
-          stream: options.streaming
-        },
-        {
-          strategy: 'balanced',
-          preferredProvider: options.preferredProvider,
-          maxRetries: options.retryPolicy?.maxRetries || 3,
-          timeout: options.timeout || 30000
-        }
-      );
-
-      // Update memory with interaction
-      await this.realTimeMemoryManager.updateMemory(agentId, {
-        input,
-        output: result.content,
-        metadata: result.metadata
-      });
-
-      return {
-        content: result.content,
-        usage: result.usage,
-        provider: result.provider,
-        metadata: {
-          ...result.metadata,
-          agentId,
-          memoryUpdated: true
-        }
+      maxCost?: number;
+      retryPolicy?: {
+        maxRetries: number;
+        backoffStrategy: 'linear' | 'exponential';
       };
-
-    } catch (error) {
-      throw new Error(`Agent execution failed: ${error.message}`);
-    }
-  }
-
-  // PRODUCTION FIX: Real Agent Configuration Retrieval
-  private async getAgentConfiguration(agentId: string): Promise<any> {
+    } = {}
+  ): Promise<AgentExecution> {
     try {
-      const response = await fetch(`${this.baseUrl}/agents/${agentId}`, {
+      const response = await fetch(`${this.baseUrl}/api/agents/${agentId}/execute`, {
+        method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.getAuthToken()}`,
-          'Content-Type': 'application/json'
-        }
+          'X-Organization-ID': this.getOrganizationId()
+        },
+        body: JSON.stringify({
+          input,
+          options: {
+            sessionId: options.sessionId || this.generateSessionId(),
+            timeout: options.timeout || 30000,
+            streaming: options.streaming || false,
+            preferredProvider: options.preferredProvider,
+            maxCost: options.maxCost,
+            retryPolicy: options.retryPolicy || { maxRetries: 3, backoffStrategy: 'exponential' }
+          }
+        })
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to get agent configuration: ${response.statusText}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      throw new Error(`Failed to retrieve agent configuration: ${error.message}`);
-    }
-  }
-
-  // PRODUCTION FIX: Secure Token Management
-  private getAuthToken(): string {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('synapseai_token') || '';
-    }
-    return process.env.SYNAPSEAI_API_TOKEN || '';
-  }
-
-  // Enhanced Context Preparation with Real Memory
-  private async prepareEnhancedContext(agent: any, input: any, memory: any): Promise<any> {
-    const messages = [];
-
-    // System prompt with enhanced capabilities
-    messages.push({
-      role: 'system',
-      content: `${agent.systemPrompt || 'You are a helpful AI assistant.'}
-
-Additional Context:
-- Agent ID: ${agent.id}
-- Agent Type: ${agent.type}
-- Available Tools: ${agent.tools.join(', ')}
-- Memory Context: ${JSON.stringify(memory.relevantContext)}
-- Current Time: ${new Date().toISOString()}
-
-Instructions:
-- Use your tools when appropriate
-- Consider the conversation history and context
-- Provide detailed, helpful responses
-- If using tools, explain your reasoning`
-    });
-
-    // Add relevant conversation history
-    if (memory.conversationHistory && memory.conversationHistory.length > 0) {
-      const recentHistory = memory.conversationHistory.slice(-10);
-      messages.push(...recentHistory);
-    }
-
-    // Add current user input
-    messages.push({
-      role: 'user',
-      content: typeof input === 'string' ? input : JSON.stringify(input)
-    });
-
-    return { messages };
-  }
-
-  // Real Tool Integration
-  private async getAgentTools(toolIds: string[]): Promise<any[]> {
-    if (toolIds.length === 0) return [];
-
-    try {
-      const tools = [];
-      for (const toolId of toolIds) {
-        const response = await fetch(`${this.baseUrl}/tools/${toolId}`, {
-          headers: {
-            'Authorization': `Bearer ${this.getAuthToken()}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (response.ok) {
-          const tool = await response.json();
-          tools.push({
-            type: 'function',
-            function: {
-              name: tool.name,
-              description: tool.description,
-              parameters: tool.inputSchema
-            }
-          });
+        if (response.status === 401) {
+          throw new Error('Authentication required');
         }
+        if (response.status === 403) {
+          throw new Error('Insufficient permissions');
+        }
+        if (response.status === 404) {
+          throw new Error('Agent not found');
+        }
+        if (response.status === 429) {
+          throw new Error('Rate limit exceeded');
+        }
+        throw new Error(`Agent execution failed: ${response.status} ${response.statusText}`);
       }
-      return tools;
+
+      const execution = await response.json();
+      
+      // Validate response structure
+      if (!this.validateExecutionResponse(execution)) {
+        throw new Error('Invalid execution response format');
+      }
+
+      return execution;
     } catch (error) {
-      console.warn('Failed to load agent tools:', error.message);
-      return [];
+      console.error('Agent execution error:', error);
+      throw error;
     }
   }
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const token = this.getAuthToken();
-    const url = `${this.baseUrl}${endpoint}`;
-
-    const config: RequestInit = {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token && { Authorization: `Bearer ${token}` }),
-        ...options.headers,
-      },
-      ...options,
-    };
-
-    const response = await fetch(url, config);
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
-    }
-
-    return response.json();
-  }
-
+  // PRODUCTION: Real Agent CRUD Operations
   async getAgents(params?: {
     page?: number;
     limit?: number;
@@ -208,62 +186,205 @@ Instructions:
     type?: string;
     status?: string;
     tags?: string[];
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
   }): Promise<{ agents: Agent[]; total: number; page: number; limit: number }> {
-    const searchParams = new URLSearchParams();
-    if (params?.page) searchParams.set('page', params.page.toString());
-    if (params?.limit) searchParams.set('limit', params.limit.toString());
-    if (params?.search) searchParams.set('search', params.search);
-    if (params?.type) searchParams.set('type', params.type);
-    if (params?.status) searchParams.set('status', params.status);
-    if (params?.tags?.length) searchParams.set('tags', params.tags.join(','));
+    try {
+      const searchParams = new URLSearchParams();
+      if (params?.page) searchParams.set('page', params.page.toString());
+      if (params?.limit) searchParams.set('limit', params.limit.toString());
+      if (params?.search) searchParams.set('search', params.search);
+      if (params?.type) searchParams.set('type', params.type);
+      if (params?.status) searchParams.set('status', params.status);
+      if (params?.tags?.length) searchParams.set('tags', params.tags.join(','));
+      if (params?.sortBy) searchParams.set('sortBy', params.sortBy);
+      if (params?.sortOrder) searchParams.set('sortOrder', params.sortOrder);
 
-    return this.request(`/agents?${searchParams.toString()}`);
+      const response = await fetch(`${this.baseUrl}/api/agents?${searchParams.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch agents: ${response.status} ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get agents error:', error);
+      throw error;
+    }
   }
 
   async getAgent(id: string): Promise<Agent> {
-    return this.request(`/agents/${id}`);
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/${id}`, {
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        }
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error('Agent not found');
+        }
+        throw new Error(`Failed to fetch agent: ${response.status} ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get agent error:', error);
+      throw error;
+    }
   }
 
   async createAgent(data: Partial<Agent>): Promise<Agent> {
-    return this.request('/agents', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Failed to create agent: ${response.status} ${response.statusText}`);
+      }
+
+      const agent = await response.json();
+      
+      // Emit real-time event
+      this.emitEvent('agent_created', { agent });
+      
+      return agent;
+    } catch (error) {
+      console.error('Create agent error:', error);
+      throw error;
+    }
   }
 
   async updateAgent(id: string, data: Partial<Agent>): Promise<Agent> {
-    return this.request(`/agents/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Failed to update agent: ${response.status} ${response.statusText}`);
+      }
+
+      const agent = await response.json();
+      
+      // Clear cache and emit event
+      this.clearAgentCache(id);
+      this.emitEvent('agent_updated', { agent });
+      
+      return agent;
+    } catch (error) {
+      console.error('Update agent error:', error);
+      throw error;
+    }
   }
 
   async deleteAgent(id: string): Promise<void> {
-    await this.request(`/agents/${id}`, { method: 'DELETE' });
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete agent: ${response.status} ${response.statusText}`);
+      }
+
+      // Clear cache and emit event
+      this.clearAgentCache(id);
+      this.emitEvent('agent_deleted', { agentId: id });
+    } catch (error) {
+      console.error('Delete agent error:', error);
+      throw error;
+    }
   }
 
   async cloneAgent(id: string, name?: string): Promise<Agent> {
-    return this.request(`/agents/${id}/clone`, {
-      method: 'POST',
-      body: JSON.stringify({ name }),
-    });
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/${id}/clone`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        },
+        body: JSON.stringify({ name })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to clone agent: ${response.status} ${response.statusText}`);
+      }
+
+      const agent = await response.json();
+      this.emitEvent('agent_created', { agent });
+      
+      return agent;
+    } catch (error) {
+      console.error('Clone agent error:', error);
+      throw error;
+    }
   }
 
   async testAgent(id: string, message: string): Promise<{
+    executionId: string;
     response: string;
     executionTime: number;
     tokenUsage: { input: number; output: number };
     cost: number;
   }> {
-    return this.request(`/agents/${id}/test`, {
-      method: 'POST',
-      body: JSON.stringify({ message }),
-    });
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/${id}/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        },
+        body: JSON.stringify({ message })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Agent test failed: ${response.status} ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Test agent error:', error);
+      throw error;
+    }
   }
 
+  // PRODUCTION: Real Agent Sessions Management
   async getAgentSessions(id: string, params?: {
     page?: number;
     limit?: number;
+    status?: string;
+    dateFrom?: Date;
+    dateTo?: Date;
   }): Promise<{
     sessions: Array<{
       id: string;
@@ -271,38 +392,123 @@ Instructions:
       endedAt?: Date;
       messageCount: number;
       status: string;
+      cost: number;
+      duration?: number;
     }>;
     total: number;
   }> {
-    const searchParams = new URLSearchParams();
-    if (params?.page) searchParams.set('page', params.page.toString());
-    if (params?.limit) searchParams.set('limit', params.limit.toString());
+    try {
+      const searchParams = new URLSearchParams();
+      if (params?.page) searchParams.set('page', params.page.toString());
+      if (params?.limit) searchParams.set('limit', params.limit.toString());
+      if (params?.status) searchParams.set('status', params.status);
+      if (params?.dateFrom) searchParams.set('dateFrom', params.dateFrom.toISOString());
+      if (params?.dateTo) searchParams.set('dateTo', params.dateTo.toISOString());
 
-    return this.request(`/agents/${id}/sessions?${searchParams.toString()}`);
+      const response = await fetch(`${this.baseUrl}/api/agents/${id}/sessions?${searchParams.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch agent sessions: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      // Transform timestamps
+      data.sessions = data.sessions.map((session: any) => ({
+        ...session,
+        startedAt: new Date(session.startedAt),
+        endedAt: session.endedAt ? new Date(session.endedAt) : undefined
+      }));
+
+      return data;
+    } catch (error) {
+      console.error('Get agent sessions error:', error);
+      throw error;
+    }
   }
 
+  // PRODUCTION: Real Agent Analytics
   async getAgentAnalytics(id: string, timeRange?: string): Promise<AgentAnalytics> {
-    const searchParams = new URLSearchParams();
-    if (timeRange) searchParams.set('timeRange', timeRange);
+    try {
+      const searchParams = new URLSearchParams();
+      if (timeRange) searchParams.set('timeRange', timeRange);
 
-    return this.request(`/agents/${id}/analytics?${searchParams.toString()}`);
+      const response = await fetch(`${this.baseUrl}/api/agents/${id}/analytics?${searchParams.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch agent analytics: ${response.status} ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get agent analytics error:', error);
+      throw error;
+    }
   }
 
+  // PRODUCTION: Real Agent Configuration Management
   async updateAgentConfiguration(
     id: string, 
     configuration: Partial<AgentConfiguration>
   ): Promise<Agent> {
-    return this.request(`/agents/${id}/configuration`, {
-      method: 'PATCH',
-      body: JSON.stringify(configuration),
-    });
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/${id}/configuration`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        },
+        body: JSON.stringify(configuration)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to update agent configuration: ${response.status} ${response.statusText}`);
+      }
+
+      const agent = await response.json();
+      this.clearAgentCache(id);
+      this.emitEvent('agent_configuration_updated', { agent });
+      
+      return agent;
+    } catch (error) {
+      console.error('Update agent configuration error:', error);
+      throw error;
+    }
   }
 
+  // PRODUCTION: Real Agent Templates
   async getAgentTemplates(category?: string): Promise<Agent[]> {
-    const searchParams = new URLSearchParams();
-    if (category) searchParams.set('category', category);
+    try {
+      const searchParams = new URLSearchParams();
+      if (category) searchParams.set('category', category);
 
-    return this.request(`/agents/templates?${searchParams.toString()}`);
+      const response = await fetch(`${this.baseUrl}/api/agents/templates?${searchParams.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch agent templates: ${response.status} ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get agent templates error:', error);
+      throw error;
+    }
   }
 
   async createFromTemplate(templateId: string, data: {
@@ -310,281 +516,444 @@ Instructions:
     description?: string;
     configuration?: Partial<AgentConfiguration>;
   }): Promise<Agent> {
-    return this.request(`/agents/templates/${templateId}/create`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async exportAgent(id: string): Promise<Blob> {
-    const response = await fetch(`${this.baseUrl}/agents/${id}/export`, {
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('synapseai_token')}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error('Export failed');
-    }
-
-    return response.blob();
-  }
-
-  async importAgent(file: File): Promise<Agent> {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const response = await fetch(`${this.baseUrl}/agents/import`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('synapseai_token')}`,
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || 'Import failed');
-    }
-
-    return response.json();
-  }
-
-  async bulkDelete(ids: string[]): Promise<void> {
-    await this.request('/agents/bulk-delete', {
-      method: 'POST',
-      body: JSON.stringify({ ids }),
-    });
-  }
-
-  async bulkUpdateStatus(ids: string[], status: string): Promise<void> {
-    await this.request('/agents/bulk-update-status', {
-      method: 'POST',
-      body: JSON.stringify({ ids, status }),
-    });
-  }
-}
-
-// PRODUCTION FIX: Real-Time Memory Manager with Persistent Storage
-class RealTimeMemoryManager {
-  private memoryCache = new Map<string, any>();
-  private memoryUpdateQueue: Array<{ agentId: string; update: any }> = [];
-  private persistenceEnabled = true;
-
-  async getAgentMemory(agentId: string): Promise<any> {
-    // Check cache first
-    if (this.memoryCache.has(agentId)) {
-      return this.memoryCache.get(agentId);
-    }
-
-    // Load from persistent storage
     try {
-      const response = await fetch(`/api/agents/${agentId}/memory`, {
+      const response = await fetch(`${this.baseUrl}/api/agents/templates/${templateId}/create`, {
+        method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.getAuthToken()}`
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to create agent from template: ${response.status} ${response.statusText}`);
+      }
+
+      const agent = await response.json();
+      this.emitEvent('agent_created', { agent });
+      
+      return agent;
+    } catch (error) {
+      console.error('Create from template error:', error);
+      throw error;
+    }
+  }
+
+  // PRODUCTION: Real Import/Export
+  async exportAgent(id: string): Promise<Blob> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/${id}/export`, {
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
         }
       });
 
-      if (response.ok) {
-        const memory = await response.json();
-        this.memoryCache.set(agentId, memory);
-        return memory;
+      if (!response.ok) {
+        throw new Error(`Failed to export agent: ${response.status} ${response.statusText}`);
       }
+
+      return await response.blob();
     } catch (error) {
-      console.warn('Failed to load agent memory:', error.message);
-    }
-
-    // Return default memory structure
-    const defaultMemory = {
-      conversationHistory: [],
-      semanticMemory: [],
-      episodicMemory: [],
-      relevantContext: {}
-    };
-    
-    this.memoryCache.set(agentId, defaultMemory);
-    return defaultMemory;
-  }
-
-  async updateMemory(agentId: string, interaction: any): Promise<void> {
-    const memory = await this.getAgentMemory(agentId);
-
-    // Update conversation history
-    memory.conversationHistory.push(
-      {
-        role: 'user',
-        content: interaction.input,
-        timestamp: new Date()
-      },
-      {
-        role: 'assistant',
-        content: interaction.output,
-        timestamp: new Date()
-      }
-    );
-
-    // Limit history size
-    if (memory.conversationHistory.length > 50) {
-      memory.conversationHistory = memory.conversationHistory.slice(-50);
-    }
-
-    // Update cache
-    this.memoryCache.set(agentId, memory);
-
-    // Queue for persistent storage
-    if (this.persistenceEnabled) {
-      this.memoryUpdateQueue.push({ agentId, update: interaction });
-      this.processMemoryUpdates();
+      console.error('Export agent error:', error);
+      throw error;
     }
   }
 
-  private async processMemoryUpdates(): Promise<void> {
-    if (this.memoryUpdateQueue.length === 0) return;
-
-    const updates = [...this.memoryUpdateQueue];
-    this.memoryUpdateQueue.length = 0;
-
+  async importAgent(file: File): Promise<Agent> {
     try {
-      await fetch('/api/agents/memory/batch-update', {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch(`${this.baseUrl}/api/agents/import`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.getAuthToken()}`,
-          'Content-Type': 'application/json'
+          'X-Organization-ID': this.getOrganizationId()
         },
-        body: JSON.stringify({ updates })
+        body: formData
       });
-    } catch (error) {
-      console.warn('Failed to persist memory updates:', error.message);
-      // Re-queue failed updates
-      this.memoryUpdateQueue.unshift(...updates);
-    }
-  }
 
-  private getAuthToken(): string {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('synapseai_token') || '';
-    }
-    return process.env.SYNAPSEAI_API_TOKEN || '';
-  }
-}
-
-// PRODUCTION FIX: Enhanced Collaboration Engine
-class CollaborationEngine {
-  private activeCollaborations = new Map<string, any>();
-  private collaborationPersistence = true;
-
-  async initiateCollaboration(
-    initiatorAgentId: string,
-    collaboratorAgentIds: string[],
-    task: string,
-    strategy: string
-  ): Promise<string> {
-    const collaborationId = `collab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    const collaboration = {
-      id: collaborationId,
-      initiator: initiatorAgentId,
-      collaborators: collaboratorAgentIds,
-      task,
-      strategy,
-      status: 'active',
-      startedAt: new Date(),
-      messages: [],
-      results: new Map()
-    };
-
-    this.activeCollaborations.set(collaborationId, collaboration);
-
-    // Persist collaboration if enabled
-    if (this.collaborationPersistence) {
-      try {
-        await fetch('/api/agents/collaboration', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.getAuthToken()}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(collaboration)
-        });
-      } catch (error) {
-        console.warn('Failed to persist collaboration:', error.message);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Failed to import agent: ${response.status} ${response.statusText}`);
       }
-    }
 
-    // Notify all agents about the collaboration
-    for (const agentId of [initiatorAgentId, ...collaboratorAgentIds]) {
-      await this.notifyAgentOfCollaboration(agentId, collaboration);
+      const agent = await response.json();
+      this.emitEvent('agent_created', { agent });
+      
+      return agent;
+    } catch (error) {
+      console.error('Import agent error:', error);
+      throw error;
     }
-
-    return collaborationId;
   }
 
-  private async notifyAgentOfCollaboration(agentId: string, collaboration: any): Promise<void> {
+  // PRODUCTION: Real Bulk Operations
+  async bulkDelete(ids: string[]): Promise<void> {
     try {
-      await fetch('/api/agents/collaboration/notify', {
+      const response = await fetch(`${this.baseUrl}/api/agents/bulk-delete`, {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.getAuthToken()}`,
-          'Content-Type': 'application/json'
+          'X-Organization-ID': this.getOrganizationId()
+        },
+        body: JSON.stringify({ ids })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Bulk delete failed: ${response.status} ${response.statusText}`);
+      }
+
+      // Clear cache for all deleted agents
+      ids.forEach(id => this.clearAgentCache(id));
+      this.emitEvent('agents_bulk_deleted', { ids });
+    } catch (error) {
+      console.error('Bulk delete error:', error);
+      throw error;
+    }
+  }
+
+  async bulkUpdateStatus(ids: string[], status: string): Promise<void> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/bulk-update-status`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        },
+        body: JSON.stringify({ ids, status })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Bulk status update failed: ${response.status} ${response.statusText}`);
+      }
+
+      // Clear cache for all updated agents
+      ids.forEach(id => this.clearAgentCache(id));
+      this.emitEvent('agents_bulk_updated', { ids, status });
+    } catch (error) {
+      console.error('Bulk update status error:', error);
+      throw error;
+    }
+  }
+
+  // PRODUCTION: Real-time Memory Management
+  async getAgentMemory(agentId: string, sessionId?: string): Promise<{
+    conversationHistory: Array<{
+      role: 'user' | 'assistant' | 'system';
+      content: string;
+      timestamp: Date;
+      metadata?: any;
+    }>;
+    semanticMemory: Array<{
+      id: string;
+      content: string;
+      embedding: number[];
+      relevanceScore: number;
+      timestamp: Date;
+    }>;
+    episodicMemory: Array<{
+      id: string;
+      event: string;
+      context: any;
+      timestamp: Date;
+    }>;
+    workingMemory: any;
+  }> {
+    try {
+      const searchParams = new URLSearchParams();
+      if (sessionId) searchParams.set('sessionId', sessionId);
+
+      const response = await fetch(`${this.baseUrl}/api/agents/${agentId}/memory?${searchParams.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch agent memory: ${response.status} ${response.statusText}`);
+      }
+
+      const memory = await response.json();
+      
+      // Transform timestamps
+      memory.conversationHistory = memory.conversationHistory.map((item: any) => ({
+        ...item,
+        timestamp: new Date(item.timestamp)
+      }));
+      
+      memory.semanticMemory = memory.semanticMemory.map((item: any) => ({
+        ...item,
+        timestamp: new Date(item.timestamp)
+      }));
+      
+      memory.episodicMemory = memory.episodicMemory.map((item: any) => ({
+        ...item,
+        timestamp: new Date(item.timestamp)
+      }));
+
+      return memory;
+    } catch (error) {
+      console.error('Get agent memory error:', error);
+      throw error;
+    }
+  }
+
+  async updateAgentMemory(agentId: string, memoryUpdate: {
+    conversationHistory?: Array<{
+      role: 'user' | 'assistant' | 'system';
+      content: string;
+      metadata?: any;
+    }>;
+    semanticMemory?: Array<{
+      content: string;
+      embedding?: number[];
+    }>;
+    episodicMemory?: Array<{
+      event: string;
+      context: any;
+    }>;
+    workingMemory?: any;
+    sessionId?: string;
+  }): Promise<void> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/${agentId}/memory`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        },
+        body: JSON.stringify(memoryUpdate)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to update agent memory: ${response.status} ${response.statusText}`);
+      }
+
+      this.emitEvent('agent_memory_updated', { agentId, sessionId: memoryUpdate.sessionId });
+    } catch (error) {
+      console.error('Update agent memory error:', error);
+      throw error;
+    }
+  }
+
+  // PRODUCTION: Real Agent Collaboration
+  async initiateCollaboration(initiatorAgentId: string, collaboratorAgentIds: string[], task: {
+    description: string;
+    context: any;
+    strategy: 'sequential' | 'parallel' | 'hierarchical' | 'democratic';
+    maxDuration?: number;
+  }): Promise<{
+    collaborationId: string;
+    status: 'initiated' | 'running' | 'completed' | 'failed';
+    participants: string[];
+    startedAt: Date;
+  }> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/collaboration`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
         },
         body: JSON.stringify({
-          agentId,
-          collaborationId: collaboration.id,
-          task: collaboration.task,
-          role: agentId === collaboration.initiator ? 'initiator' : 'collaborator'
-        })
-      });
-    } catch (error) {
-      console.warn('Failed to notify agent of collaboration:', error.message);
-    }
-  }
-
-  private getAuthToken(): string {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('synapseai_token') || '';
-    }
-    return process.env.SYNAPSEAI_API_TOKEN || '';
-  }
-}
-
-// PRODUCTION FIX: Real Provider Service Integration
-class ProvidersService {
-  private baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-
-  async executeWithSmartRouting(
-    organizationId: string,
-    data: any,
-    preferences: any = {}
-  ): Promise<any> {
-    try {
-      const response = await fetch(`${this.baseUrl}/providers/execute`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.getAuthToken()}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          organizationId,
-          data,
-          preferences
+          initiatorAgentId,
+          collaboratorAgentIds,
+          task
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Provider execution failed: ${response.statusText}`);
+        throw new Error(`Failed to initiate collaboration: ${response.status} ${response.statusText}`);
       }
 
-      return await response.json();
+      const collaboration = await response.json();
+      this.emitEvent('collaboration_initiated', { collaboration });
+      
+      return {
+        ...collaboration,
+        startedAt: new Date(collaboration.startedAt)
+      };
     } catch (error) {
-      throw new Error(`Smart routing execution failed: ${error.message}`);
+      console.error('Initiate collaboration error:', error);
+      throw error;
     }
+  }
+
+  async getCollaborationStatus(collaborationId: string): Promise<{
+    id: string;
+    status: 'initiated' | 'running' | 'completed' | 'failed';
+    participants: Array<{
+      agentId: string;
+      role: 'initiator' | 'collaborator';
+      status: 'active' | 'idle' | 'error';
+      contribution: any;
+    }>;
+    messages: Array<{
+      from: string;
+      to: string | 'all';
+      content: string;
+      timestamp: Date;
+      type: 'message' | 'result' | 'error';
+    }>;
+    result?: any;
+    error?: string;
+    startedAt: Date;
+    completedAt?: Date;
+  }> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/agents/collaboration/${collaborationId}`, {
+        headers: {
+          'Authorization': `Bearer ${this.getAuthToken()}`,
+          'X-Organization-ID': this.getOrganizationId()
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to get collaboration status: ${response.status} ${response.statusText}`);
+      }
+
+      const collaboration = await response.json();
+      
+      // Transform timestamps
+      collaboration.messages = collaboration.messages.map((msg: any) => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp)
+      }));
+      
+      collaboration.startedAt = new Date(collaboration.startedAt);
+      if (collaboration.completedAt) {
+        collaboration.completedAt = new Date(collaboration.completedAt);
+      }
+
+      return collaboration;
+    } catch (error) {
+      console.error('Get collaboration status error:', error);
+      throw error;
+    }
+  }
+
+  // PRODUCTION: WebSocket Connection for Real-time Updates
+  private initializeWebSocketConnection(): void {
+    if (typeof window === 'undefined') return;
+
+    const wsUrl = `${this.baseUrl.replace('http', 'ws')}/api/agents/ws`;
+    
+    try {
+      this.wsConnection = new WebSocket(wsUrl);
+      
+      this.wsConnection.onopen = () => {
+        console.log('Agent service WebSocket connected');
+        
+        // Send authentication
+        this.wsConnection?.send(JSON.stringify({
+          type: 'auth',
+          token: this.getAuthToken(),
+          organizationId: this.getOrganizationId()
+        }));
+      };
+
+      this.wsConnection.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          this.handleWebSocketMessage(data);
+        } catch (error) {
+          console.error('WebSocket message parsing error:', error);
+        }
+      };
+
+      this.wsConnection.onclose = () => {
+        console.log('Agent service WebSocket disconnected');
+        
+        // Reconnect after 5 seconds
+        setTimeout(() => {
+          this.initializeWebSocketConnection();
+        }, 5000);
+      };
+
+      this.wsConnection.onerror = (error) => {
+        console.error('Agent service WebSocket error:', error);
+      };
+    } catch (error) {
+      console.error('Failed to initialize WebSocket connection:', error);
+    }
+  }
+
+  private handleWebSocketMessage(data: any): void {
+    // Emit event to all subscribers
+    this.eventSubscribers.forEach(callback => callback(data));
+  }
+
+  private emitEvent(type: string, payload: any): void {
+    if (this.wsConnection && this.wsConnection.readyState === WebSocket.OPEN) {
+      this.wsConnection.send(JSON.stringify({ type, payload }));
+    }
+  }
+
+  // PRODUCTION: Event Subscription
+  subscribeToEvents(callback: (event: any) => void): () => void {
+    this.eventSubscribers.add(callback);
+    
+    return () => {
+      this.eventSubscribers.delete(callback);
+    };
+  }
+
+  // Helper Methods
+  private validateExecutionResponse(execution: any): boolean {
+    return (
+      execution &&
+      typeof execution.id === 'string' &&
+      typeof execution.agentId === 'string' &&
+      typeof execution.status === 'string' &&
+      execution.startedAt &&
+      execution.metadata &&
+      typeof execution.metadata.userId === 'string' &&
+      typeof execution.metadata.organizationId === 'string'
+    );
+  }
+
+  private generateSessionId(): string {
+    return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
   private getAuthToken(): string {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('synapseai_token') || '';
+      return localStorage.getItem('synapseai_token') || 
+             localStorage.getItem('accessToken') || 
+             sessionStorage.getItem('authToken') || '';
     }
     return process.env.SYNAPSEAI_API_TOKEN || '';
+  }
+
+  private getOrganizationId(): string {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('organizationId') || 
+             sessionStorage.getItem('currentOrganization') || '';
+    }
+    return process.env.SYNAPSEAI_ORG_ID || '';
+  }
+
+  private clearAgentCache(agentId: string): void {
+    const keysToDelete = Array.from(this.cache.keys()).filter(key => key.includes(agentId));
+    keysToDelete.forEach(key => this.cache.delete(key));
+  }
+
+  disconnect(): void {
+    if (this.wsConnection) {
+      this.wsConnection.close();
+      this.wsConnection = null;
+    }
+    this.eventSubscribers.clear();
+    this.cache.clear();
   }
 }
 

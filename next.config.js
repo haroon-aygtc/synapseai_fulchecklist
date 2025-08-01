@@ -3,18 +3,43 @@
 const nextConfig = {
     images: {
         domains: ['images.unsplash.com'],
+    },
+    // Add server-only configuration to handle Node.js modules
+    experimental: {
+        serverComponentsExternalPackages: ['pg', 'ioredis', 'puppeteer', 'vm2'],
+    },
+    // Configure webpack to handle Node.js modules
+    webpack: (config, { isServer }) => {
+        if (!isServer) {
+            // Don't attempt to import these modules on the client side
+            config.resolve.fallback = {
+                ...config.resolve.fallback,
+                fs: false,
+                net: false,
+                tls: false,
+                dns: false,
+                child_process: false,
+                pg: false,
+                'pg-native': false,
+                ioredis: false,
+                puppeteer: false,
+                vm: false
+            };
+        }
+        return config;
     }
 };
 
 if (process.env.NEXT_PUBLIC_TEMPO) {
-    nextConfig["experimental"] = {
-        // NextJS 13.4.8 up to 14.1.3:
-        // swcPlugins: [[require.resolve("tempo-devtools/swc/0.86"), {}]],
-        // NextJS 14.1.3 to 14.2.11:
-        swcPlugins: [[require.resolve("tempo-devtools/swc/0.90"), {}]]
-
-        // NextJS 15+ (Not yet supported, coming soon)
+    // Preserve Tempo configuration
+    if (!nextConfig.experimental) {
+        nextConfig.experimental = {};
     }
+    
+    // Add Tempo SWC plugins
+    nextConfig.experimental.swcPlugins = [
+        [require.resolve("tempo-devtools/swc/0.90"), {}]
+    ];
 }
 
 module.exports = nextConfig;
