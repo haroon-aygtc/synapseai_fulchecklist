@@ -1,23 +1,17 @@
-"use client";
-
-import React, { useState } from 'react';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { 
   DropdownMenu, 
   DropdownMenuContent, 
   DropdownMenuItem, 
-  DropdownMenuLabel, 
-  DropdownMenuSeparator, 
-  DropdownMenuTrigger 
+  DropdownMenuTrigger,
+  DropdownMenuSeparator 
 } from '@/components/ui/dropdown-menu';
-import {
+import { 
   Command,
   CommandDialog,
   CommandEmpty,
@@ -26,102 +20,134 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
-import {
-  Activity,
-  Bot,
-  Wrench,
-  Workflow,
-  Database,
-  Layers,
-  BarChart3,
-  Settings,
-  Search,
-  Bell,
-  Plus,
+import { 
+  Bot, 
+  Workflow, 
+  Settings, 
+  BarChart3, 
+  Database, 
+  Zap, 
+  Search, 
+  Bell, 
+  Menu, 
+  X,
   ChevronLeft,
   ChevronRight,
-  Building2,
-  User,
+  Home,
+  Users,
+  Shield,
+  CreditCard,
+  HelpCircle,
   LogOut,
   Moon,
   Sun,
-  Zap,
-  HelpCircle,
-  Radio
+  Command as CommandIcon
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { ApixStatus } from '@/components/apix';
 
 interface MainLayoutProps {
   children: React.ReactNode;
+  currentPage?: string;
 }
 
-const navigationItems = [
+interface NavigationItem {
+  id: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  href: string;
+  badge?: string;
+  subItems?: NavigationItem[];
+}
+
+const navigationItems: NavigationItem[] = [
   {
-    title: 'Dashboard',
-    href: '/',
-    icon: Activity,
-    badge: null,
+    id: 'dashboard',
+    label: 'Dashboard',
+    icon: Home,
+    href: '/dashboard',
   },
   {
-    title: 'Agents',
-    href: '/agents',
+    id: 'agents',
+    label: 'Agents',
     icon: Bot,
+    href: '/agents',
     badge: '12',
+    subItems: [
+      { id: 'agents-list', label: 'All Agents', icon: Bot, href: '/agents' },
+      { id: 'agents-create', label: 'Create Agent', icon: Bot, href: '/agents/create' },
+      { id: 'agents-templates', label: 'Templates', icon: Bot, href: '/agents/templates' },
+    ]
   },
   {
-    title: 'Tools',
+    id: 'tools',
+    label: 'Tools',
+    icon: Zap,
     href: '/tools',
-    icon: Wrench,
-    badge: '24',
+    badge: '8',
+    subItems: [
+      { id: 'tools-list', label: 'All Tools', icon: Zap, href: '/tools' },
+      { id: 'tools-create', label: 'Create Tool', icon: Zap, href: '/tools/create' },
+      { id: 'tools-marketplace', label: 'Marketplace', icon: Zap, href: '/tools/marketplace' },
+    ]
   },
   {
-    title: 'Workflows',
-    href: '/workflows',
+    id: 'workflows',
+    label: 'Workflows',
     icon: Workflow,
-    badge: '7',
+    href: '/workflows',
+    badge: '5',
+    subItems: [
+      { id: 'workflows-list', label: 'All Workflows', icon: Workflow, href: '/workflows' },
+      { id: 'workflows-create', label: 'Create Workflow', icon: Workflow, href: '/workflows/create' },
+      { id: 'workflows-templates', label: 'Templates', icon: Workflow, href: '/workflows/templates' },
+    ]
   },
   {
-    title: 'Knowledge',
-    href: '/knowledge',
+    id: 'knowledge',
+    label: 'Knowledge Base',
     icon: Database,
-    badge: null,
+    href: '/knowledge',
+    subItems: [
+      { id: 'knowledge-documents', label: 'Documents', icon: Database, href: '/knowledge/documents' },
+      { id: 'knowledge-collections', label: 'Collections', icon: Database, href: '/knowledge/collections' },
+      { id: 'knowledge-search', label: 'Search', icon: Database, href: '/knowledge/search' },
+    ]
   },
   {
-    title: 'Providers',
-    href: '/providers',
-    icon: Layers,
-    badge: '4',
-  },
-  {
-    title: 'Analytics',
-    href: '/analytics',
+    id: 'analytics',
+    label: 'Analytics',
     icon: BarChart3,
-    badge: null,
+    href: '/analytics',
+    subItems: [
+      { id: 'analytics-overview', label: 'Overview', icon: BarChart3, href: '/analytics' },
+      { id: 'analytics-performance', label: 'Performance', icon: BarChart3, href: '/analytics/performance' },
+      { id: 'analytics-costs', label: 'Costs', icon: BarChart3, href: '/analytics/costs' },
+    ]
   },
   {
-    title: 'APIX Debug',
-    href: '/apix',
-    icon: Radio,
-    badge: null,
-  },
-  {
-    title: 'Settings',
-    href: '/settings',
+    id: 'settings',
+    label: 'Settings',
     icon: Settings,
-    badge: null,
+    href: '/settings',
+    subItems: [
+      { id: 'settings-general', label: 'General', icon: Settings, href: '/settings' },
+      { id: 'settings-providers', label: 'Providers', icon: Settings, href: '/settings/providers' },
+      { id: 'settings-team', label: 'Team', icon: Users, href: '/settings/team' },
+      { id: 'settings-security', label: 'Security', icon: Shield, href: '/settings/security' },
+      { id: 'settings-billing', label: 'Billing', icon: CreditCard, href: '/settings/billing' },
+    ]
   },
 ];
 
-export default function MainLayout({ children }: MainLayoutProps) {
+export default function MainLayout({ children, currentPage = 'dashboard' }: MainLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
-  const pathname = usePathname();
-  const router = useRouter();
+  const [expandedItems, setExpandedItems] = useState<string[]>(['agents', 'tools', 'workflows']);
   const { theme, setTheme } = useTheme();
 
-  // Global keyboard shortcut for command palette
-  React.useEffect(() => {
+  // Command palette keyboard shortcut
+  useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
@@ -132,229 +158,246 @@ export default function MainLayout({ children }: MainLayoutProps) {
     return () => document.removeEventListener('keydown', down);
   }, []);
 
-  // Handle command item selection
-  const handleCommandSelect = (href: string) => {
-    setCommandOpen(false);
-    router.push(href);
+  const toggleExpanded = (itemId: string) => {
+    setExpandedItems(prev => 
+      prev.includes(itemId) 
+        ? prev.filter(id => id !== itemId)
+        : [...prev, itemId]
+    );
+  };
+
+  const renderNavigationItem = (item: NavigationItem, level = 0) => {
+    const isExpanded = expandedItems.includes(item.id);
+    const hasSubItems = item.subItems && item.subItems.length > 0;
+    const isActive = currentPage === item.id;
+
+    return (
+      <div key={item.id} className="space-y-1">
+        <Button
+          variant={isActive ? "secondary" : "ghost"}
+          className={cn(
+            "w-full justify-start h-10 px-3",
+            level > 0 && "ml-4 w-[calc(100%-1rem)]",
+            sidebarCollapsed && level === 0 && "justify-center px-2",
+            isActive && "bg-primary/10 text-primary border-r-2 border-primary"
+          )}
+          onClick={() => {
+            if (hasSubItems) {
+              toggleExpanded(item.id);
+            }
+            // Handle navigation here
+          }}
+        >
+          <item.icon className={cn("h-4 w-4", !sidebarCollapsed && "mr-3")} />
+          {!sidebarCollapsed && (
+            <>
+              <span className="flex-1 text-left">{item.label}</span>
+              {item.badge && (
+                <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs">
+                  {item.badge}
+                </Badge>
+              )}
+              {hasSubItems && (
+                <ChevronRight 
+                  className={cn(
+                    "h-4 w-4 transition-transform",
+                    isExpanded && "rotate-90"
+                  )} 
+                />
+              )}
+            </>
+          )}
+        </Button>
+        
+        {hasSubItems && isExpanded && !sidebarCollapsed && (
+          <div className="space-y-1">
+            {item.subItems!.map(subItem => renderNavigationItem(subItem, level + 1))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="min-h-screen bg-background">
+      {/* Command Palette */}
+      <CommandDialog open={commandOpen} onOpenChange={setCommandOpen}>
+        <CommandInput placeholder="Type a command or search..." />
+        <CommandList>
+          <CommandEmpty>No results found.</CommandEmpty>
+          <CommandGroup heading="Navigation">
+            {navigationItems.map(item => (
+              <CommandItem key={item.id}>
+                <item.icon className="mr-2 h-4 w-4" />
+                <span>{item.label}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+          <CommandGroup heading="Quick Actions">
+            <CommandItem>
+              <Bot className="mr-2 h-4 w-4" />
+              <span>Create New Agent</span>
+            </CommandItem>
+            <CommandItem>
+              <Workflow className="mr-2 h-4 w-4" />
+              <span>Create New Workflow</span>
+            </CommandItem>
+            <CommandItem>
+              <Zap className="mr-2 h-4 w-4" />
+              <span>Create New Tool</span>
+            </CommandItem>
+          </CommandGroup>
+        </CommandList>
+      </CommandDialog>
+
+      {/* Mobile Menu Overlay */}
+      {mobileMenuOpen && (
+        <div 
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
       <aside className={cn(
-        "flex flex-col border-r bg-card transition-all duration-300",
-        sidebarCollapsed ? "w-16" : "w-64"
+        "fixed left-0 top-0 z-50 h-full bg-card border-r border-border transition-all duration-300",
+        sidebarCollapsed ? "w-16" : "w-64",
+        mobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}>
-        {/* Logo and Collapse Button */}
-        <div className="flex h-16 items-center justify-between px-4 border-b">
-          {!sidebarCollapsed && (
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <Zap className="h-4 w-4" />
+        <div className="flex h-full flex-col">
+          {/* Logo */}
+          <div className="flex h-16 items-center border-b border-border px-4">
+            {!sidebarCollapsed ? (
+              <div className="flex items-center space-x-2">
+                <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+                  <Bot className="h-5 w-5 text-white" />
+                </div>
+                <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  SynapseAI
+                </span>
               </div>
-              <span className="text-lg font-semibold">SynapseAI</span>
-            </div>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="h-8 w-8"
-          >
-            {sidebarCollapsed ? (
-              <ChevronRight className="h-4 w-4" />
             ) : (
-              <ChevronLeft className="h-4 w-4" />
+              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center mx-auto">
+                <Bot className="h-5 w-5 text-white" />
+              </div>
             )}
-          </Button>
-        </div>
-
-        {/* Organization Switcher */}
-        {!sidebarCollapsed && (
-          <div className="p-4 border-b">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="w-full justify-start">
-                  <Building2 className="mr-2 h-4 w-4" />
-                  Acme Corp
-                  <ChevronRight className="ml-auto h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56">
-                <DropdownMenuLabel>Organizations</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <Building2 className="mr-2 h-4 w-4" />
-                  Acme Corp
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Building2 className="mr-2 h-4 w-4" />
-                  TechStart Inc
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create Organization
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
-        )}
 
-        {/* Navigation */}
-        <nav className="flex-1 p-4">
-          <div className="space-y-2">
-            {navigationItems.map((item) => {
-              const isActive = pathname === item.href;
-              const Icon = item.icon;
-              
-              return (
-                <Link key={item.href} href={item.href}>
-                  <div className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                    isActive 
-                      ? "bg-accent text-accent-foreground" 
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  )}>
-                    <Icon className="h-4 w-4 flex-shrink-0" />
-                    {!sidebarCollapsed && (
-                      <>
-                        <span className="flex-1">{item.title}</span>
-                        {item.badge && (
-                          <Badge variant="secondary" className="ml-auto">
-                            {item.badge}
-                          </Badge>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </Link>
-              );
-            })}
+          {/* Navigation */}
+          <nav className="flex-1 space-y-2 p-4 overflow-y-auto">
+            {navigationItems.map(item => renderNavigationItem(item))}
+          </nav>
+
+          {/* Sidebar Toggle */}
+          <div className="border-t border-border p-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn("w-full", sidebarCollapsed && "justify-center")}
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            >
+              {sidebarCollapsed ? (
+                <ChevronRight className="h-4 w-4" />
+              ) : (
+                <>
+                  <ChevronLeft className="h-4 w-4 mr-2" />
+                  Collapse
+                </>
+              )}
+            </Button>
           </div>
-        </nav>
-
-        {/* Quick Actions */}
-        {!sidebarCollapsed && (
-          <div className="p-4 border-t">
-            <div className="space-y-2">
-              <Button 
-                className="w-full justify-start" 
-                size="sm"
-                onClick={() => router.push('/agents/create')}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Quick Create
-              </Button>
-              <Button 
-                variant="outline" 
-                className="w-full justify-start" 
-                size="sm"
-                onClick={() => router.push('/support')}
-              >
-                <HelpCircle className="mr-2 h-4 w-4" />
-                Help & Support
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* User Profile */}
-        <div className="p-4 border-t">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className={cn(
-                "w-full justify-start p-2",
-                sidebarCollapsed && "justify-center"
-              )}>
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src="https://api.dicebear.com/7.x/avataaars/svg?seed=admin" />
-                  <AvatarFallback>AD</AvatarFallback>
-                </Avatar>
-                {!sidebarCollapsed && (
-                  <div className="ml-3 text-left">
-                    <p className="text-sm font-medium">Admin User</p>
-                    <p className="text-xs text-muted-foreground">admin@acme.com</p>
-                  </div>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>My Account</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <User className="mr-2 h-4 w-4" />
-                Profile
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Settings className="mr-2 h-4 w-4" />
-                Settings
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-                {theme === 'dark' ? (
-                  <Sun className="mr-2 h-4 w-4" />
-                ) : (
-                  <Moon className="mr-2 h-4 w-4" />
-                )}
-                Toggle Theme
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <LogOut className="mr-2 h-4 w-4" />
-                Log out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Top Header */}
-        <header className="h-16 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="flex h-full items-center justify-between px-6">
-            {/* Search */}
-            <div className="flex items-center gap-4 flex-1 max-w-md">
+      <div className={cn(
+        "transition-all duration-300",
+        sidebarCollapsed ? "lg:ml-16" : "lg:ml-64"
+      )}>
+        {/* Header */}
+        <header className="sticky top-0 z-30 h-16 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border">
+          <div className="flex h-full items-center justify-between px-4">
+            <div className="flex items-center space-x-4">
               <Button
-                variant="outline"
-                className="relative w-full justify-start text-sm text-muted-foreground"
-                onClick={() => setCommandOpen(true)}
+                variant="ghost"
+                size="sm"
+                className="lg:hidden"
+                onClick={() => setMobileMenuOpen(true)}
               >
-                <Search className="mr-2 h-4 w-4" />
-                Search anything...
-                <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 select-none items-center gap-1 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium opacity-100 sm:flex">
-                  <span className="text-xs">⌘</span>K
-                </kbd>
+                <Menu className="h-5 w-5" />
               </Button>
+              
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search or press Cmd+K"
+                  className="w-64 pl-9 pr-4"
+                  onClick={() => setCommandOpen(true)}
+                  readOnly
+                />
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">
+                    <CommandIcon className="h-3 w-3" />K
+                  </kbd>
+                </div>
+              </div>
             </div>
 
-            {/* Actions */}
-            <div className="flex items-center gap-4">
-              {/* APIX Status Indicator */}
-              <ApixStatus showLabel />
-              
-              <Button variant="ghost" size="icon">
-                <Bell className="h-4 w-4" />
+            <div className="flex items-center space-x-4">
+              {/* Theme Toggle */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              >
+                <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+                <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
               </Button>
+
+              {/* Notifications */}
+              <Button variant="ghost" size="sm" className="relative">
+                <Bell className="h-4 w-4" />
+                <Badge className="absolute -top-1 -right-1 h-5 w-5 rounded-full p-0 text-xs">
+                  3
+                </Badge>
+              </Button>
+
+              {/* User Menu */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button size="sm">
-                    <Plus className="mr-2 h-4 w-4" />
-                    Create
+                  <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src="/avatars/01.png" alt="User" />
+                      <AvatarFallback>JD</AvatarFallback>
+                    </Avatar>
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => router.push('/agents/create')}>
-                    <Bot className="mr-2 h-4 w-4" />
-                    New Agent
+                <DropdownMenuContent className="w-56" align="end" forceMount>
+                  <div className="flex items-center justify-start gap-2 p-2">
+                    <div className="flex flex-col space-y-1 leading-none">
+                      <p className="font-medium">John Doe</p>
+                      <p className="w-[200px] truncate text-sm text-muted-foreground">
+                        john@example.com
+                      </p>
+                    </div>
+                  </div>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem>
+                    <Users className="mr-2 h-4 w-4" />
+                    <span>Team</span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => router.push('/tools/create')}>
-                    <Wrench className="mr-2 h-4 w-4" />
-                    New Tool
+                  <DropdownMenuItem>
+                    <Settings className="mr-2 h-4 w-4" />
+                    <span>Settings</span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => router.push('/workflows/create')}>
-                    <Workflow className="mr-2 h-4 w-4" />
-                    New Workflow
+                  <DropdownMenuItem>
+                    <HelpCircle className="mr-2 h-4 w-4" />
+                    <span>Help</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem>
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Log out</span>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -363,43 +406,10 @@ export default function MainLayout({ children }: MainLayoutProps) {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 p-6">
           {children}
         </main>
       </div>
-
-      {/* Command Palette */}
-      <CommandDialog open={commandOpen} onOpenChange={setCommandOpen}>
-        <CommandInput placeholder="Type a command or search..." />
-        <CommandList>
-          <CommandEmpty>No results found.</CommandEmpty>
-          <CommandGroup heading="Navigation">
-            {navigationItems.map((item) => (
-              <CommandItem 
-                key={item.href} 
-                onSelect={() => handleCommandSelect(item.href)}
-              >
-                <item.icon className="mr-2 h-4 w-4" />
-                <span>{item.title}</span>
-              </CommandItem>
-            ))}
-          </CommandGroup>
-          <CommandGroup heading="Quick Actions">
-            <CommandItem onSelect={() => handleCommandSelect('/agents/create')}>
-              <Bot className="mr-2 h-4 w-4" />
-              <span>Create Agent</span>
-            </CommandItem>
-            <CommandItem onSelect={() => handleCommandSelect('/tools/create')}>
-              <Wrench className="mr-2 h-4 w-4" />
-              <span>Add Tool</span>
-            </CommandItem>
-            <CommandItem onSelect={() => handleCommandSelect('/workflows/create')}>
-              <Workflow className="mr-2 h-4 w-4" />
-              <span>New Workflow</span>
-            </CommandItem>
-          </CommandGroup>
-        </CommandList>
-      </CommandDialog>
     </div>
   );
 }

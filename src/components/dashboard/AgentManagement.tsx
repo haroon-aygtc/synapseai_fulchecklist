@@ -1,6 +1,4 @@
-'use client';
-
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Agent, 
   AgentType, 
@@ -27,7 +25,6 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
-import { Slider } from '@/components/ui/slider';
 import { Progress } from '@/components/ui/progress';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -70,50 +67,129 @@ import { cn } from '@/lib/utils';
 interface Agent {
   id: string;
   name: string;
-  description?: string;
-  type: 'STANDALONE' | 'TOOL_DRIVEN' | 'HYBRID' | 'MULTI_TASK' | 'MULTI_PROVIDER';
+  description: string;
+  type: 'standalone' | 'tool-driven' | 'hybrid' | 'multi-task' | 'multi-provider';
+  status: 'active' | 'inactive' | 'error' | 'training';
   model: string;
-  temperature: number;
-  maxTokens: number;
-  isActive: boolean;
-  version: number;
+  provider: string;
+  conversations: number;
+  successRate: number;
+  avgResponseTime: number;
+  lastActive: string;
   createdAt: string;
-  updatedAt: string;
-  user: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    email: string;
+  createdBy: string;
+  tags: string[];
+  capabilities: string[];
+  avatar?: string;
+  cost: number;
+  usage: {
+    today: number;
+    week: number;
+    month: number;
   };
-  sessions: Array<{
-    id: string;
-    sessionId: string;
-    status: string;
-    lastActivityAt: string;
-  }>;
 }
 
-interface AgentExecution {
-  sessionId: string;
-  response?: string;
-  streaming?: boolean;
+interface AgentTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  type: Agent['type'];
+  model: string;
+  provider: string;
+  tags: string[];
+  popularity: number;
+  rating: number;
+  installs: number;
 }
 
-const AGENT_TYPES = [
-  { value: 'STANDALONE', label: 'Standalone', description: 'Independent agent with no external dependencies', icon: Bot },
-  { value: 'TOOL_DRIVEN', label: 'Tool-Driven', description: 'Agent that primarily uses tools to accomplish tasks', icon: Zap },
-  { value: 'HYBRID', label: 'Hybrid', description: 'Combines conversational AI with tool execution', icon: Brain },
-  { value: 'MULTI_TASK', label: 'Multi-Task', description: 'Handles multiple concurrent tasks', icon: Activity },
-  { value: 'MULTI_PROVIDER', label: 'Multi-Provider', description: 'Uses multiple AI providers with fallback', icon: Sparkles }
+const mockAgents: Agent[] = [
+  {
+    id: '1',
+    name: 'Customer Support Bot',
+    description: 'Handles customer inquiries and support tickets with advanced NLP capabilities',
+    type: 'hybrid',
+    status: 'active',
+    model: 'gpt-4',
+    provider: 'OpenAI',
+    conversations: 1247,
+    successRate: 94.2,
+    avgResponseTime: 1.8,
+    lastActive: '2 minutes ago',
+    createdAt: '2024-01-15',
+    createdBy: 'John Doe',
+    tags: ['customer-service', 'nlp', 'multilingual'],
+    capabilities: ['Text Analysis', 'Sentiment Detection', 'Multi-language', 'Context Memory'],
+    cost: 247.50,
+    usage: { today: 45, week: 312, month: 1247 }
+  },
+  {
+    id: '2',
+    name: 'Data Analysis Agent',
+    description: 'Processes and analyzes large datasets with statistical insights',
+    type: 'tool-driven',
+    status: 'active',
+    model: 'claude-3',
+    provider: 'Anthropic',
+    conversations: 89,
+    successRate: 98.7,
+    avgResponseTime: 3.2,
+    lastActive: '15 minutes ago',
+    createdAt: '2024-01-10',
+    createdBy: 'Jane Smith',
+    tags: ['analytics', 'data-science', 'statistics'],
+    capabilities: ['Data Processing', 'Statistical Analysis', 'Visualization', 'Report Generation'],
+    cost: 156.30,
+    usage: { today: 12, week: 67, month: 289 }
+  },
+  {
+    id: '3',
+    name: 'Content Creator',
+    description: 'Generates high-quality content for marketing and social media',
+    type: 'standalone',
+    status: 'inactive',
+    model: 'gemini-pro',
+    provider: 'Google',
+    conversations: 456,
+    successRate: 91.5,
+    avgResponseTime: 2.1,
+    lastActive: '2 hours ago',
+    createdAt: '2024-01-08',
+    createdBy: 'Mike Johnson',
+    tags: ['content', 'marketing', 'creative'],
+    capabilities: ['Content Generation', 'SEO Optimization', 'Brand Voice', 'Multi-format'],
+    cost: 89.75,
+    usage: { today: 0, week: 23, month: 456 }
+  }
 ];
 
-const AI_MODELS = [
-  { value: 'gpt-4', label: 'GPT-4', provider: 'OpenAI' },
-  { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', provider: 'OpenAI' },
-  { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', provider: 'OpenAI' },
-  { value: 'claude-3-opus', label: 'Claude 3 Opus', provider: 'Anthropic' },
-  { value: 'claude-3-sonnet', label: 'Claude 3 Sonnet', provider: 'Anthropic' },
-  { value: 'claude-3-haiku', label: 'Claude 3 Haiku', provider: 'Anthropic' }
+const mockTemplates: AgentTemplate[] = [
+  {
+    id: 't1',
+    name: 'E-commerce Assistant',
+    description: 'Complete e-commerce support with order tracking and product recommendations',
+    category: 'Customer Service',
+    type: 'hybrid',
+    model: 'gpt-4',
+    provider: 'OpenAI',
+    tags: ['ecommerce', 'recommendations', 'orders'],
+    popularity: 95,
+    rating: 4.8,
+    installs: 2847
+  },
+  {
+    id: 't2',
+    name: 'HR Recruitment Bot',
+    description: 'Automates candidate screening and interview scheduling',
+    category: 'Human Resources',
+    type: 'tool-driven',
+    model: 'claude-3',
+    provider: 'Anthropic',
+    tags: ['hr', 'recruitment', 'screening'],
+    popularity: 87,
+    rating: 4.6,
+    installs: 1923
+  }
 ];
 
 export default function AgentManagement() {
@@ -121,33 +197,27 @@ export default function AgentManagement() {
   const { hasPermission } = usePermissions();
   
   // State management
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedType, setSelectedType] = useState<string>('all');
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; timestamp: string }>>([]);
-  const [chatInput, setChatInput] = useState('');
-  const [chatLoading, setChatLoading] = useState(false);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [agents, setAgents] = useState<Agent[]>(mockAgents);
+  const [templates, setTemplates] = useState<AgentTemplate[]>(mockTemplates);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showTemplateDialog, setShowTemplateDialog] = useState(false);
 
-  const { client, isConnected } = useApix();
-
-  // Form state for creating/editing agents
-  const [formData, setFormData] = useState({
+  const [newAgent, setNewAgent] = useState({
     name: '',
     description: '',
-    type: 'STANDALONE' as Agent['type'],
-    systemPrompt: '',
+    type: 'standalone' as Agent['type'],
     model: 'gpt-4',
-    temperature: 0.7,
-    maxTokens: 2048,
-    tools: [] as string[],
-    skills: [] as any[]
+    provider: 'OpenAI',
+    capabilities: [] as string[],
+    tags: [] as string[]
   });
+
+  const { client, isConnected } = useApix();
 
   // Data loading functions
   const fetchAgents = useCallback(async () => {
@@ -237,148 +307,233 @@ export default function AgentManagement() {
   }, [client, isConnected, selectedAgent, currentSessionId]);
 
   // Agent actions
-  const handleCreateAgent = async () => {
-    try {
-      const response = await fetch('/api/agents', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(formData)
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create agent');
-      }
-
-      const newAgent = await response.json();
-      setAgents(prev => [newAgent, ...prev]);
-      setIsCreateDialogOpen(false);
-      resetForm();
-      
-      toast({
-        title: 'Success',
-        description: `Agent "${newAgent.name}" created successfully`
-      });
-    } catch (error) {
-      console.error('Error creating agent:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to create agent',
-        variant: 'destructive'
-      });
-    }
-  };
-
-  const handleDeleteAgent = async (agentId: string) => {
-    try {
-      const response = await fetch(`/api/agents/${agentId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to delete agent');
-      }
-
-      setAgents(prev => prev.filter(agent => agent.id !== agentId));
-      if (selectedAgent?.id === agentId) {
-        setSelectedAgent(null);
-      }
-
-      toast({
-        title: 'Success',
-        description: 'Agent deleted successfully'
-      });
-    } catch (error) {
-      console.error('Error deleting agent:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to delete agent',
-        variant: 'destructive'
-      });
-    }
-  };
-
-  const handleSendMessage = async () => {
-    if (!chatInput.trim() || !selectedAgent || chatLoading) return;
-
-    const userMessage = {
-      role: 'user' as const,
-      content: chatInput.trim(),
-      timestamp: new Date().toISOString()
+  const handleCreateAgent = () => {
+    const agent: Agent = {
+      id: Date.now().toString(),
+      ...newAgent,
+      status: 'training',
+      conversations: 0,
+      successRate: 0,
+      avgResponseTime: 0,
+      lastActive: 'Never',
+      createdAt: new Date().toISOString().split('T')[0],
+      createdBy: 'Current User',
+      cost: 0,
+      usage: { today: 0, week: 0, month: 0 }
     };
+    
+    setAgents([...agents, agent]);
+    setShowCreateDialog(false);
+    setNewAgent({
+      name: '',
+      description: '',
+      type: 'standalone',
+      model: 'gpt-4',
+      provider: 'OpenAI',
+      capabilities: [],
+      tags: []
+    });
+  };
 
-    setChatMessages(prev => [...prev, userMessage]);
-    setChatLoading(true);
-    setChatInput('');
+  const handleToggleAgent = (agentId: string) => {
+    setAgents(agents.map(agent => 
+      agent.id === agentId 
+        ? { ...agent, status: agent.status === 'active' ? 'inactive' : 'active' }
+        : agent
+    ));
+  };
 
-    try {
-      const response = await fetch(`/api/agents/${selectedAgent.id}/execute`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          message: userMessage.content,
-          sessionId: currentSessionId,
-          stream: false
-        })
-      });
+  const handleDeleteAgent = (agentId: string) => {
+    setAgents(agents.filter(agent => agent.id !== agentId));
+  };
 
-      if (!response.ok) {
-        throw new Error('Failed to execute agent');
-      }
+  const AgentCard = ({ agent }: { agent: Agent }) => (
+    <Card className="group hover:shadow-lg transition-all duration-200 cursor-pointer">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between">
+          <div className="flex items-center space-x-3">
+            <Avatar className="h-10 w-10">
+              <AvatarImage src={agent.avatar} />
+              <AvatarFallback>
+                <Bot className="h-5 w-5" />
+              </AvatarFallback>
+            </Avatar>
+            <div>
+              <CardTitle className="text-lg">{agent.name}</CardTitle>
+              <div className="flex items-center space-x-2 mt-1">
+                {getStatusIcon(agent.status)}
+                {getStatusBadge(agent.status)}
+              </div>
+            </div>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setSelectedAgent(agent)}>
+                <Eye className="h-4 w-4 mr-2" />
+                View Details
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Chat
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Edit className="h-4 w-4 mr-2" />
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Copy className="h-4 w-4 mr-2" />
+                Clone
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem 
+                onClick={() => handleToggleAgent(agent.id)}
+                className={agent.status === 'active' ? 'text-orange-600' : 'text-green-600'}
+              >
+                {agent.status === 'active' ? (
+                  <>
+                    <Pause className="h-4 w-4 mr-2" />
+                    Pause
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Activate
+                  </>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => handleDeleteAgent(agent.id)}
+                className="text-red-600"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground line-clamp-2">
+          {agent.description}
+        </p>
+        
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Type:</span>
+          <Badge variant="outline" className={cn("text-xs", getTypeColor(agent.type))}>
+            {agent.type.replace('-', ' ')}
+          </Badge>
+        </div>
+        
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Model:</span>
+          <span className="font-medium">{agent.model}</span>
+        </div>
+        
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Success Rate:</span>
+            <span className="font-medium">{agent.successRate}%</span>
+          </div>
+          <Progress value={agent.successRate} className="h-1" />
+        </div>
+        
+        <div className="grid grid-cols-3 gap-2 text-center text-sm">
+          <div>
+            <div className="font-medium">{agent.conversations}</div>
+            <div className="text-muted-foreground text-xs">Conversations</div>
+          </div>
+          <div>
+            <div className="font-medium">{agent.avgResponseTime}s</div>
+            <div className="text-muted-foreground text-xs">Avg Response</div>
+          </div>
+          <div>
+            <div className="font-medium">${agent.cost}</div>
+            <div className="text-muted-foreground text-xs">Monthly Cost</div>
+          </div>
+        </div>
+        
+        <div className="flex flex-wrap gap-1">
+          {agent.tags.slice(0, 3).map(tag => (
+            <Badge key={tag} variant="secondary" className="text-xs">
+              {tag}
+            </Badge>
+          ))}
+          {agent.tags.length > 3 && (
+            <Badge variant="secondary" className="text-xs">
+              +{agent.tags.length - 3}
+            </Badge>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
 
-      const result: AgentExecution = await response.json();
-      
-      if (!currentSessionId) {
-        setCurrentSessionId(result.sessionId);
-      }
-
-      if (result.response) {
-        setChatMessages(prev => [...prev, {
-          role: 'assistant',
-          content: result.response!,
-          timestamp: new Date().toISOString()
-        }]);
-      }
-    } catch (error) {
-      console.error('Error sending message:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to send message',
-        variant: 'destructive'
-      });
-    } finally {
-      setChatLoading(false);
+  const getStatusIcon = (status: Agent['status']) => {
+    switch (status) {
+      case 'active':
+        return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case 'inactive':
+        return <XCircle className="h-4 w-4 text-gray-500" />;
+      case 'error':
+        return <AlertCircle className="h-4 w-4 text-red-500" />;
+      case 'training':
+        return <Activity className="h-4 w-4 text-blue-500 animate-pulse" />;
+      default:
+        return <Clock className="h-4 w-4 text-gray-500" />;
     }
+  };
+
+  const getStatusBadge = (status: Agent['status']) => {
+    const variants = {
+      active: 'default',
+      inactive: 'secondary',
+      error: 'destructive',
+      training: 'outline'
+    } as const;
+    
+    return (
+      <Badge variant={variants[status]} className="capitalize">
+        {status}
+      </Badge>
+    );
+  };
+
+  const getTypeColor = (type: Agent['type']) => {
+    const colors = {
+      standalone: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
+      'tool-driven': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
+      hybrid: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300',
+      'multi-task': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300',
+      'multi-provider': 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-300'
+    };
+    return colors[type];
   };
 
   const resetForm = () => {
-    setFormData({
+    setNewAgent({
       name: '',
       description: '',
-      type: 'STANDALONE',
-      systemPrompt: '',
+      type: 'standalone',
       model: 'gpt-4',
-      temperature: 0.7,
-      maxTokens: 2048,
-      tools: [],
-      skills: []
+      provider: 'OpenAI',
+      capabilities: [],
+      tags: []
     });
   };
 
   // Filter and search logic
   const filteredAgents = agents.filter(agent => {
-    const matchesSearch = agent.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         agent.description?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = selectedType === 'all' || agent.type === selectedType;
-    return matchesSearch && matchesType;
+    const matchesSearch = agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         agent.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || agent.status === statusFilter;
+    const matchesType = typeFilter === 'all' || agent.type === typeFilter;
+    
+    return matchesSearch && matchesStatus && matchesType;
   });
 
   const getStatusColor = (status: string) => {
@@ -516,6 +671,68 @@ export default function AgentManagement() {
     );
   };
 
+  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; timestamp: string }>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || !selectedAgent || chatLoading) return;
+
+    const userMessage = {
+      role: 'user' as const,
+      content: chatInput.trim(),
+      timestamp: new Date().toISOString()
+    };
+
+    setChatMessages(prev => [...prev, userMessage]);
+    setChatLoading(true);
+    setChatInput('');
+
+    try {
+      const response = await fetch(`/api/agents/${selectedAgent.id}/execute`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: userMessage.content,
+          sessionId: currentSessionId,
+          stream: false
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to execute agent');
+      }
+
+      const result: AgentExecution = await response.json();
+      
+      if (!currentSessionId) {
+        setCurrentSessionId(result.sessionId);
+      }
+
+      if (result.response) {
+        setChatMessages(prev => [...prev, {
+          role: 'assistant',
+          content: result.response!,
+          timestamp: new Date().toISOString()
+        }]);
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to send message',
+        variant: 'destructive'
+      });
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -542,7 +759,7 @@ export default function AgentManagement() {
             </div>
             
             <Button
-              onClick={() => setIsCreateDialogOpen(true)}
+              onClick={() => setShowCreateDialog(true)}
               className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white shadow-lg"
             >
               <Plus className="h-4 w-4 mr-2" />
@@ -560,13 +777,13 @@ export default function AgentManagement() {
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                   <Input
                     placeholder="Search agents..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
                     className="pl-10 border-gray-200 focus:border-blue-500 focus:ring-blue-500"
                   />
                 </div>
                 
-                <Select value={selectedType} onValueChange={setSelectedType}>
+                <Select value={typeFilter} onValueChange={setTypeFilter}>
                   <SelectTrigger className="w-48 border-gray-200">
                     <Filter className="h-4 w-4 mr-2" />
                     <SelectValue placeholder="Filter by type" />
@@ -728,18 +945,18 @@ export default function AgentManagement() {
               </div>
               <h3 className="text-lg font-semibold text-gray-900 mb-2">No agents found</h3>
               <p className="text-gray-600 mb-6">
-                {searchTerm || selectedType !== 'all' 
-                  ? 'Try adjusting your search or filters'
-                  : 'Get started by creating your first AI agent'
+                {searchQuery || statusFilter !== 'all' || typeFilter !== 'all' 
+                  ? 'Try adjusting your filters or search query'
+                  : 'Get started by creating your first agent'
                 }
               </p>
-              {!searchTerm && selectedType === 'all' && (
+              {!searchQuery && statusFilter === 'all' && typeFilter === 'all' && (
                 <Button 
-                  onClick={() => setIsCreateDialogOpen(true)}
+                  onClick={() => setShowCreateDialog(true)}
                   className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
                 >
                   <Plus className="h-4 w-4 mr-2" />
-                  Create Your First Agent
+                  Create Agent
                 </Button>
               )}
             </CardContent>
@@ -748,141 +965,144 @@ export default function AgentManagement() {
       </div>
 
       {/* Create Agent Dialog */}
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Bot className="h-5 w-5" />
-              Create New Agent
-            </DialogTitle>
+            <DialogTitle>Create New Agent</DialogTitle>
             <DialogDescription>
-              Configure your AI agent with custom settings and capabilities
+              Configure your new AI agent with the settings below
             </DialogDescription>
           </DialogHeader>
-
-          <div className="space-y-6">
+          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Agent Name *</Label>
+                <Label htmlFor="name">Agent Name</Label>
                 <Input
                   id="name"
+                  value={newAgent.name}
+                  onChange={(e) => setNewAgent({...newAgent, name: e.target.value})}
                   placeholder="Enter agent name"
-                  value={formData.name}
-                  onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                 />
               </div>
-              
               <div className="space-y-2">
-                <Label htmlFor="type">Agent Type *</Label>
-                <Select value={formData.type} onValueChange={(value: Agent['type']) => setFormData(prev => ({ ...prev, type: value }))}>
+                <Label htmlFor="type">Agent Type</Label>
+                <Select value={newAgent.type} onValueChange={(value: Agent['type']) => setNewAgent({...newAgent, type: value})}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {AGENT_TYPES.map(type => {
-                      const Icon = type.icon;
-                      return (
-                        <SelectItem key={type.value} value={type.value}>
-                          <div className="flex items-center gap-2">
-                            <Icon className="h-4 w-4" />
-                            <div>
-                              <div className="font-medium">{type.label}</div>
-                              <div className="text-xs text-gray-500">{type.description}</div>
-                            </div>
-                          </div>
-                        </SelectItem>
-                      );
-                    })}
+                    <SelectItem value="standalone">Standalone</SelectItem>
+                    <SelectItem value="tool-driven">Tool-driven</SelectItem>
+                    <SelectItem value="hybrid">Hybrid</SelectItem>
+                    <SelectItem value="multi-task">Multi-task</SelectItem>
+                    <SelectItem value="multi-provider">Multi-provider</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
-
             <div className="space-y-2">
               <Label htmlFor="description">Description</Label>
               <Textarea
                 id="description"
-                placeholder="Describe what this agent does..."
-                value={formData.description}
-                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                value={newAgent.description}
+                onChange={(e) => setNewAgent({...newAgent, description: e.target.value})}
+                placeholder="Describe what this agent does"
                 rows={3}
               />
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="systemPrompt">System Prompt</Label>
-              <Textarea
-                id="systemPrompt"
-                placeholder="You are a helpful AI assistant..."
-                value={formData.systemPrompt}
-                onChange={(e) => setFormData(prev => ({ ...prev, systemPrompt: e.target.value }))}
-                rows={4}
-              />
-            </div>
-
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="model">AI Model</Label>
-                <Select value={formData.model} onValueChange={(value) => setFormData(prev => ({ ...prev, model: value }))}>
+                <Select value={newAgent.model} onValueChange={(value) => setNewAgent({...newAgent, model: value})}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {AI_MODELS.map(model => (
-                      <SelectItem key={model.value} value={model.value}>
-                        <div>
-                          <div className="font-medium">{model.label}</div>
-                          <div className="text-xs text-gray-500">{model.provider}</div>
-                        </div>
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="gpt-4">GPT-4</SelectItem>
+                    <SelectItem value="gpt-3.5-turbo">GPT-3.5 Turbo</SelectItem>
+                    <SelectItem value="claude-3">Claude 3</SelectItem>
+                    <SelectItem value="gemini-pro">Gemini Pro</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              
               <div className="space-y-2">
-                <Label htmlFor="maxTokens">Max Tokens</Label>
-                <Input
-                  id="maxTokens"
-                  type="number"
-                  min="1"
-                  max="32000"
-                  value={formData.maxTokens}
-                  onChange={(e) => setFormData(prev => ({ ...prev, maxTokens: parseInt(e.target.value) || 2048 }))}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Temperature: {formData.temperature}</Label>
-              <Slider
-                value={[formData.temperature]}
-                onValueChange={([value]) => setFormData(prev => ({ ...prev, temperature: value }))}
-                min={0}
-                max={2}
-                step={0.1}
-                className="w-full"
-              />
-              <div className="flex justify-between text-xs text-gray-500">
-                <span>Focused (0)</span>
-                <span>Balanced (1)</span>
-                <span>Creative (2)</span>
+                <Label htmlFor="provider">Provider</Label>
+                <Select value={newAgent.provider} onValueChange={(value) => setNewAgent({...newAgent, provider: value})}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="OpenAI">OpenAI</SelectItem>
+                    <SelectItem value="Anthropic">Anthropic</SelectItem>
+                    <SelectItem value="Google">Google</SelectItem>
+                    <SelectItem value="Mistral">Mistral</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </div>
-
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
               Cancel
             </Button>
-            <Button 
-              onClick={handleCreateAgent}
-              disabled={!formData.name.trim()}
-              className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
-            >
+            <Button onClick={handleCreateAgent} disabled={!newAgent.name || !newAgent.description}>
               Create Agent
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Template Browser Dialog */}
+      <Dialog open={showTemplateDialog} onOpenChange={setShowTemplateDialog}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Agent Templates</DialogTitle>
+            <DialogDescription>
+              Choose from pre-built agent templates to get started quickly
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 md:grid-cols-2">
+            {templates.map(template => (
+              <Card key={template.id} className="cursor-pointer hover:shadow-md transition-shadow">
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-lg">{template.name}</CardTitle>
+                      <Badge variant="outline" className="mt-1">
+                        {template.category}
+                      </Badge>
+                    </div>
+                    <div className="text-right text-sm text-muted-foreground">
+                      <div className="flex items-center">
+                        <TrendingUp className="h-3 w-3 mr-1" />
+                        {template.rating}
+                      </div>
+                      <div>{template.installs} installs</div>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    {template.description}
+                  </p>
+                  <div className="flex items-center justify-between text-sm mb-3">
+                    <span>Model: {template.model}</span>
+                    <span>Provider: {template.provider}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mb-3">
+                    {template.tags.map(tag => (
+                      <Badge key={tag} variant="secondary" className="text-xs">
+                        {tag}
+                      </Badge>
+                    ))}
+                  </div>
+                  <Button className="w-full" size="sm">
+                    Use Template
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -968,6 +1188,166 @@ export default function AgentManagement() {
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* Agent Details Dialog */}
+      {selectedAgent && (
+        <Dialog open={!!selectedAgent} onOpenChange={() => setSelectedAgent(null)}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center space-x-3">
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={selectedAgent.avatar} />
+                  <AvatarFallback>
+                    <Bot className="h-4 w-4" />
+                  </AvatarFallback>
+                </Avatar>
+                <span>{selectedAgent.name}</span>
+                {getStatusBadge(selectedAgent.status)}
+              </DialogTitle>
+              <DialogDescription>
+                {selectedAgent.description}
+              </DialogDescription>
+            </DialogHeader>
+            
+            <Tabs defaultValue="overview" className="w-full">
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="overview">Overview</TabsTrigger>
+                <TabsTrigger value="performance">Performance</TabsTrigger>
+                <TabsTrigger value="settings">Settings</TabsTrigger>
+                <TabsTrigger value="logs">Logs</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="overview" className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">Configuration</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Type:</span>
+                        <Badge variant="outline" className={getTypeColor(selectedAgent.type)}>
+                          {selectedAgent.type}
+                        </Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Model:</span>
+                        <span>{selectedAgent.model}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Provider:</span>
+                        <span>{selectedAgent.provider}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Created:</span>
+                        <span>{selectedAgent.createdAt}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">Usage Statistics</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Today:</span>
+                        <span>{selectedAgent.usage.today} requests</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">This Week:</span>
+                        <span>{selectedAgent.usage.week} requests</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">This Month:</span>
+                        <span>{selectedAgent.usage.month} requests</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Monthly Cost:</span>
+                        <span>${selectedAgent.cost}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+                
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Capabilities</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedAgent.capabilities.map(capability => (
+                        <Badge key={capability} variant="secondary">
+                          {capability}
+                        </Badge>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+              
+              <TabsContent value="performance" className="space-y-4">
+                <div className="grid grid-cols-3 gap-4">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center">
+                        <CheckCircle className="h-4 w-4 mr-2 text-green-500" />
+                        Success Rate
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold">{selectedAgent.successRate}%</div>
+                      <Progress value={selectedAgent.successRate} className="mt-2" />
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center">
+                        <Clock className="h-4 w-4 mr-2 text-blue-500" />
+                        Avg Response Time
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold">{selectedAgent.avgResponseTime}s</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Target: &lt;2s
+                      </div>
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center">
+                        <MessageSquare className="h-4 w-4 mr-2 text-purple-500" />
+                        Total Conversations
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold">{selectedAgent.conversations}</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        All time
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="settings" className="space-y-4">
+                <div className="text-center text-muted-foreground py-8">
+                  Agent settings configuration would go here
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="logs" className="space-y-4">
+                <div className="text-center text-muted-foreground py-8">
+                  Agent execution logs would go here
+                </div>
+              </TabsContent>
+            </Tabs>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
