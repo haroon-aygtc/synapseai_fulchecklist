@@ -10,137 +10,103 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Authentication & Authorization
+// User Management & Authentication
 model User {
-  id                String    @id @default(cuid())
-  email             String    @unique
-  firstName         String
-  lastName          String
-  avatar            String?
-  passwordHash      String
-  role              UserRole  @default(DEVELOPER)
-  organizationId    String
-  permissions       Permission[]
-  isActive          Boolean   @default(true)
-  lastLoginAt       DateTime?
-  twoFactorEnabled  Boolean   @default(false)
-  twoFactorSecret   String?
-  backupCodes       String[]
-  emailVerified     Boolean   @default(false)
-  emailVerificationToken String?
-  passwordResetToken String?
-  passwordResetExpires DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id            String   @id @default(cuid())
+  email         String   @unique
+  firstName     String?
+  lastName      String?
+  avatar        String?
+  isActive      Boolean  @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  apiKeys           ApiKey[]
-  sessions          Session[]
-  agents            Agent[]
-  tools             Tool[]
-  workflows         Workflow[]
+  // Authentication
+  passwordHash  String?
+  emailVerified Boolean  @default(false)
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret String?
+
+  // Organization relationships
+  organizationMemberships OrganizationMember[]
+  ownedOrganizations      Organization[] @relation("OrganizationOwner")
+
+  // Resource ownership
+  agents        Agent[]
+  tools         Tool[]
+  workflows     Workflow[]
+  knowledgeBases KnowledgeBase[]
+  providers     Provider[]
+
+  // Activity tracking
+  agentSessions AgentSession[]
   workflowExecutions WorkflowExecution[]
-  auditLogs         AuditLog[]
+  auditLogs     AuditLog[]
 
   @@map("users")
 }
 
+// Multi-tenant Organization System
 model Organization {
-  id                String    @id @default(cuid())
-  name              String
-  slug              String    @unique
-  domain            String?
-  logo              String?
-  primaryColor      String    @default("#3b82f6")
-  secondaryColor    String    @default("#1e40af")
-  customBranding    Json      @default("{}")
-  settings          Json      @default("{}")
-  subscriptionId    String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  domain      String?
+  logo        String?
+  settings    Json     @default("{}")
+  metadata    Json     @default("{}")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  users             User[]
-  agents            Agent[]
-  tools             Tool[]
-  workflows         Workflow[]
-  workflowExecutions WorkflowExecution[]
-  apiKeys           ApiKey[]
-  auditLogs         AuditLog[]
-  subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
+  // Ownership
+  ownerId     String
+  owner       User     @relation("OrganizationOwner", fields: [ownerId], references: [id])
+
+  // Members
+  members     OrganizationMember[]
+
+  // Resources
+  agents      Agent[]
+  tools       Tool[]
+  workflows   Workflow[]
+  knowledgeBases KnowledgeBase[]
+  providers   Provider[]
+  apiKeys     ApiKey[]
+
+  // Billing & Usage
+  subscription Subscription?
+  usageMetrics UsageMetric[]
+
+  // Audit & Security
+  auditLogs   AuditLog[]
 
   @@map("organizations")
 }
 
-model Subscription {
-  id                String    @id @default(cuid())
-  plan              SubscriptionPlan @default(FREE)
-  status            SubscriptionStatus @default(ACTIVE)
-  currentPeriodStart DateTime
-  currentPeriodEnd  DateTime
-  cancelAtPeriodEnd Boolean   @default(false)
-  stripeSubscriptionId String?
-  usage             Json      @default("{}")
-  limits            Json      @default("{}")
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  organizations     Organization[]
-
-  @@map("subscriptions")
-}
-
-model ApiKey {
-  id             String    @id @default(cuid())
-  name           String
-  keyHash        String    @unique
-  userId         String
+model OrganizationMember {
+  id             String   @id @default(cuid())
   organizationId String
-  permissions    Permission[]
-  lastUsedAt     DateTime?
-  expiresAt      DateTime?
-  isActive       Boolean   @default(true)
-  createdAt      DateTime  @default(now())
+  userId         String
+  role           Role     @default(VIEWER)
+  permissions    String[] @default([])
+  isActive       Boolean  @default(true)
+  joinedAt       DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  @@map("api_keys")
+  @@unique([organizationId, userId])
+  @@map("organization_members")
 }
 
-model Session {
-  id             String    @id @default(cuid())
-  userId         String
-  organizationId String
-  token          String    @unique
-  refreshToken   String    @unique
-  expiresAt      DateTime
-  ipAddress      String
-  userAgent      String
-  isActive       Boolean   @default(true)
-  lastActivityAt DateTime  @default(now())
-  createdAt      DateTime  @default(now())
-
-  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("sessions")
-}
-
-model AuditLog {
-  id             String    @id @default(cuid())
-  userId         String?
-  organizationId String
-  action         String
-  resource       String
-  resourceId     String?
-  details        Json      @default("{}")
-  ipAddress      String
-  userAgent      String
-  timestamp      DateTime  @default(now())
-
-  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  @@map("audit_logs")
+enum Role {
+  SUPER_ADMIN
+  ORG_ADMIN
+  DEVELOPER
+  VIEWER
 }
 
 // Agent System
@@ -149,228 +115,35 @@ model Agent {
   name           String
   description    String?
   type           AgentType @default(STANDALONE)
-  config         Json      @default("{}")
   systemPrompt   String?
   model          String    @default("gpt-4")
   temperature    Float     @default(0.7)
   maxTokens      Int       @default(2048)
   tools          String[]  @default([])
   skills         Json      @default("[]")
-  memory         Json      @default("{}")
-  isActive       Boolean   @default(true)
+  config         Json      @default("{}")
+  metadata       Json      @default("{}")
   version        Int       @default(1)
-  userId         String
-  organizationId String
+  isActive       Boolean   @default(true)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Ownership
+  userId         String
+  organizationId String
+  user           User         @relation(fields: [userId], references: [id])
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Sessions & Executions
   sessions       AgentSession[]
   workflowNodes  WorkflowNode[]
 
+  // Templates & Versions
+  templateId     String?
+  parentAgent    Agent?  @relation("AgentVersions", fields: [templateId], references: [id])
+  versions       Agent[] @relation("AgentVersions")
+
   @@map("agents")
-}
-
-model AgentSession {
-  id             String    @id @default(cuid())
-  agentId        String
-  sessionId      String    @unique
-  context        Json      @default("{}")
-  memory         Json      @default("{}")
-  messages       Json      @default("[]")
-  status         SessionStatus @default(ACTIVE)
-  startedAt      DateTime  @default(now())
-  endedAt        DateTime?
-  lastActivityAt DateTime  @default(now())
-
-  agent          Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
-
-  @@map("agent_sessions")
-}
-
-// Tool System
-model Tool {
-  id             String    @id @default(cuid())
-  name           String
-  description    String?
-  type           ToolType
-  config         Json      @default("{}")
-  inputSchema    Json      @default("{}")
-  outputSchema   Json      @default("{}")
-  code           String?
-  endpoint       String?
-  authentication Json      @default("{}")
-  metadata       Json      @default("{}")
-  isActive       Boolean   @default(true)
-  version        Int       @default(1)
-  category       String?
-  tags           String[]  @default([])
-  userId         String
-  organizationId String
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  executions     ToolExecution[]
-  workflowNodes  WorkflowNode[]
-
-  @@map("tools")
-}
-
-model ToolExecution {
-  id             String    @id @default(cuid())
-  toolId         String
-  input          Json
-  output         Json?
-  status         ExecutionStatus @default(PENDING)
-  error          String?
-  startedAt      DateTime  @default(now())
-  completedAt    DateTime?
-  duration       Int?
-  metadata       Json      @default("{}")
-
-  tool           Tool @relation(fields: [toolId], references: [id], onDelete: Cascade)
-
-  @@map("tool_executions")
-}
-
-// Workflow System
-model Workflow {
-  id             String    @id @default(cuid())
-  name           String
-  description    String?
-  config         Json      @default("{}")
-  nodes          Json      @default("[]")
-  edges          Json      @default("[]")
-  triggers       Json      @default("[]")
-  variables      Json      @default("{}")
-  settings       Json      @default("{}")
-  isActive       Boolean   @default(true)
-  version        Int       @default(1)
-  userId         String
-  organizationId String
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  nodes          WorkflowNode[]
-  executions     WorkflowExecution[]
-
-  @@map("workflows")
-}
-
-model WorkflowNode {
-  id             String    @id @default(cuid())
-  workflowId     String
-  nodeId         String
-  type           NodeType
-  name           String
-  config         Json      @default("{}")
-  position       Json      @default("{}")
-  agentId        String?
-  toolId         String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  workflow       Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  agent          Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  tool           Tool?    @relation(fields: [toolId], references: [id], onDelete: SetNull)
-
-  @@unique([workflowId, nodeId])
-  @@map("workflow_nodes")
-}
-
-model WorkflowExecution {
-  id             String    @id @default(cuid())
-  workflowId     String
-  status         ExecutionStatus @default(PENDING)
-  input          Json      @default("{}")
-  output         Json?
-  context        Json      @default("{}")
-  currentNodeId  String?
-  error          String?
-  startedAt      DateTime  @default(now())
-  completedAt    DateTime?
-  duration       Int?
-  userId         String
-  organizationId String
-
-  workflow       Workflow     @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  steps          WorkflowExecutionStep[]
-
-  @@map("workflow_executions")
-}
-
-model WorkflowExecutionStep {
-  id             String    @id @default(cuid())
-  executionId    String
-  nodeId         String
-  status         ExecutionStatus @default(PENDING)
-  input          Json      @default("{}")
-  output         Json?
-  error          String?
-  startedAt      DateTime  @default(now())
-  completedAt    DateTime?
-  duration       Int?
-  retryCount     Int       @default(0)
-  metadata       Json      @default("{}")
-
-  execution      WorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
-
-  @@map("workflow_execution_steps")
-}
-
-// Enums
-enum UserRole {
-  SUPER_ADMIN
-  ORG_ADMIN
-  DEVELOPER
-  VIEWER
-}
-
-enum Permission {
-  AGENT_CREATE
-  AGENT_READ
-  AGENT_UPDATE
-  AGENT_DELETE
-  AGENT_EXECUTE
-  TOOL_CREATE
-  TOOL_READ
-  TOOL_UPDATE
-  TOOL_DELETE
-  TOOL_EXECUTE
-  WORKFLOW_CREATE
-  WORKFLOW_READ
-  WORKFLOW_UPDATE
-  WORKFLOW_DELETE
-  WORKFLOW_EXECUTE
-  ORG_MANAGE
-  ORG_SETTINGS
-  ORG_BILLING
-  ORG_ANALYTICS
-  USER_MANAGE
-  USER_INVITE
-  USER_REMOVE
-  SYSTEM_ADMIN
-  AUDIT_READ
-}
-
-enum SubscriptionPlan {
-  FREE
-  PRO
-  ENTERPRISE
-}
-
-enum SubscriptionStatus {
-  ACTIVE
-  CANCELED
-  PAST_DUE
-  UNPAID
 }
 
 enum AgentType {
@@ -381,6 +154,72 @@ enum AgentType {
   MULTI_PROVIDER
 }
 
+model AgentSession {
+  id              String        @id @default(cuid())
+  sessionId       String        @unique
+  agentId         String
+  userId          String?
+  status          SessionStatus @default(ACTIVE)
+  context         Json          @default("{}")
+  memory          Json          @default("{}")
+  messages        Json          @default("[]")
+  metadata        Json          @default("{}")
+  duration        Int?
+  startedAt       DateTime      @default(now())
+  lastActivityAt  DateTime      @default(now())
+  endedAt         DateTime?
+
+  agent           Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  user            User? @relation(fields: [userId], references: [id])
+
+  @@map("agent_sessions")
+}
+
+enum SessionStatus {
+  ACTIVE
+  INACTIVE
+  PAUSED
+  ERROR
+}
+
+// Tool System
+model Tool {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  type           ToolType
+  inputSchema    Json     @default("{}")
+  outputSchema   Json     @default("{}")
+  code           String?
+  endpoint       String?
+  authentication Json     @default("{}")
+  config         Json     @default("{}")
+  metadata       Json     @default("{}")
+  category       String?
+  tags           String[] @default([])
+  version        Int      @default(1)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Ownership
+  userId         String
+  organizationId String
+  user           User         @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Executions
+  executions     ToolExecution[]
+  workflowNodes  WorkflowNode[]
+
+  // Templates & Versions
+  templateId     String?
+  parentTool     Tool?  @relation("ToolVersions", fields: [templateId], references: [id])
+  versions       Tool[] @relation("ToolVersions")
+
+  @@map("tools")
+}
+
 enum ToolType {
   FUNCTION_CALLER
   REST_API
@@ -388,17 +227,161 @@ enum ToolType {
   BROWSER_AUTOMATION
   DATABASE_QUERY
   CUSTOM_LOGIC
+  WEBHOOK
+  FILE_PROCESSOR
+  EMAIL_SENDER
+  SCHEDULER
+}
+
+model ToolExecution {
+  id          String          @id @default(cuid())
+  toolId      String
+  input       Json
+  output      Json?
+  error       String?
+  status      ExecutionStatus @default(PENDING)
+  metadata    Json            @default("{}")
+  duration    Int?
+  startedAt   DateTime        @default(now())
+  completedAt DateTime?
+
+  tool        Tool @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
+  @@map("tool_executions")
+}
+
+// Workflow System
+model Workflow {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  nodes          Json     @default("[]")
+  edges          Json     @default("[]")
+  triggers       Json     @default("[]")
+  variables      Json     @default("{}")
+  settings       Json     @default("{}")
+  metadata       Json     @default("{}")
+  version        Int      @default(1)
+  isActive       Boolean  @default(true)
+  isTemplate     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Ownership
+  userId         String
+  organizationId String
+  user           User         @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Structure
+  nodes          WorkflowNode[]
+  executions     WorkflowExecution[]
+  schedules      WorkflowSchedule[]
+
+  // Templates & Versions
+  templateId     String?
+  parentWorkflow Workflow?  @relation("WorkflowVersions", fields: [templateId], references: [id])
+  versions       Workflow[] @relation("WorkflowVersions")
+
+  @@map("workflows")
+}
+
+model WorkflowNode {
+  id         String   @id @default(cuid())
+  workflowId String
+  nodeId     String
+  type       NodeType
+  name       String
+  config     Json     @default("{}")
+  position   Json     @default("{}")
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relationships
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  agent      Agent?   @relation(fields: [agentId], references: [id])
+  tool       Tool?    @relation(fields: [toolId], references: [id])
+
+  // Optional references
+  agentId    String?
+  toolId     String?
+
+  @@unique([workflowId, nodeId])
+  @@map("workflow_nodes")
 }
 
 enum NodeType {
+  TRIGGER
   AGENT
   TOOL
   HYBRID
   CONDITION
   LOOP
+  TRANSFORMER
   HUMAN_INPUT
   WEBHOOK
-  SCHEDULE
+  SCHEDULER
+  EMAIL
+  DATABASE
+}
+
+model WorkflowExecution {
+  id             String          @id @default(cuid())
+  workflowId     String
+  userId         String
+  organizationId String
+  input          Json            @default("{}")
+  output         Json?
+  context        Json            @default("{}")
+  error          String?
+  status         ExecutionStatus @default(PENDING)
+  metadata       Json            @default("{}")
+  duration       Int?
+  startedAt      DateTime        @default(now())
+  completedAt    DateTime?
+
+  workflow       Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [userId], references: [id])
+  steps          WorkflowExecutionStep[]
+
+  @@map("workflow_executions")
+}
+
+model WorkflowExecutionStep {
+  id          String          @id @default(cuid())
+  executionId String
+  nodeId      String
+  input       Json            @default("{}")
+  output      Json?
+  error       String?
+  status      ExecutionStatus @default(PENDING)
+  metadata    Json            @default("{}")
+  duration    Int?
+  startedAt   DateTime        @default(now())
+  completedAt DateTime?
+
+  execution   WorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@map("workflow_execution_steps")
+}
+
+model WorkflowSchedule {
+  id          String   @id @default(cuid())
+  workflowId  String
+  name        String
+  cronExpression String
+  timezone    String   @default("UTC")
+  isActive    Boolean  @default(true)
+  lastRun     DateTime?
+  nextRun     DateTime?
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workflow    Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@map("workflow_schedules")
 }
 
 enum ExecutionStatus {
@@ -410,8 +393,283 @@ enum ExecutionStatus {
   PAUSED
 }
 
-enum SessionStatus {
-  ACTIVE
-  INACTIVE
-  EXPIRED
+// Provider Integration & Smart Routing
+model Provider {
+  id             String        @id @default(cuid())
+  name           String
+  type           ProviderType
+  endpoint       String?
+  apiKey         String?
+  config         Json          @default("{}")
+  capabilities   String[]      @default([])
+  isActive       Boolean       @default(true)
+  priority       Int           @default(0)
+  rateLimit      Int?
+  costPerToken   Float?
+  metadata       Json          @default("{}")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // Ownership
+  userId         String
+  organizationId String
+  user           User         @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Routing & Analytics
+  routingRules   ProviderRoutingRule[]
+  usageMetrics   ProviderUsageMetric[]
+
+  @@map("providers")
+}
+
+enum ProviderType {
+  OPENAI
+  ANTHROPIC
+  GOOGLE
+  MISTRAL
+  GROQ
+  DEEPSEEK
+  HUGGINGFACE
+  OPENROUTER
+  OLLAMA
+  LOCALAI
+  CUSTOM
+}
+
+model ProviderRoutingRule {
+  id         String   @id @default(cuid())
+  providerId String
+  condition  Json     @default("{}")
+  priority   Int      @default(0)
+  fallback   Boolean  @default(false)
+  isActive   Boolean  @default(true)
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@map("provider_routing_rules")
+}
+
+model ProviderUsageMetric {
+  id           String   @id @default(cuid())
+  providerId   String
+  date         DateTime
+  requests     Int      @default(0)
+  tokens       Int      @default(0)
+  cost         Float    @default(0)
+  errors       Int      @default(0)
+  avgLatency   Float    @default(0)
+  metadata     Json     @default("{}")
+
+  provider     Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, date])
+  @@map("provider_usage_metrics")
+}
+
+// Knowledge Base & RAG System
+model KnowledgeBase {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  type           String   @default("general")
+  settings       Json     @default("{}")
+  metadata       Json     @default("{}")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Ownership
+  userId         String
+  organizationId String
+  user           User         @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Documents
+  documents      Document[]
+  collections    Collection[]
+
+  @@map("knowledge_bases")
+}
+
+model Collection {
+  id              String   @id @default(cuid())
+  knowledgeBaseId String
+  name            String
+  description     String?
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  documents       Document[]
+
+  @@map("collections")
+}
+
+model Document {
+  id              String   @id @default(cuid())
+  knowledgeBaseId String
+  collectionId    String?
+  title           String
+  content         String
+  type            String   @default("text")
+  source          String?
+  url             String?
+  metadata        Json     @default("{}")
+  embeddings      Json?
+  isProcessed     Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  collection      Collection?   @relation(fields: [collectionId], references: [id])
+  chunks          DocumentChunk[]
+
+  @@map("documents")
+}
+
+model DocumentChunk {
+  id         String  @id @default(cuid())
+  documentId String
+  content    String
+  embeddings Json?
+  metadata   Json    @default("{}")
+  position   Int
+  createdAt  DateTime @default(now())
+
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("document_chunks")
+}
+
+// API Management
+model ApiKey {
+  id             String   @id @default(cuid())
+  name           String
+  key            String   @unique
+  permissions    String[] @default([])
+  rateLimit      Int?
+  isActive       Boolean  @default(true)
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Ownership
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Usage tracking
+  usageMetrics   ApiKeyUsageMetric[]
+
+  @@map("api_keys")
+}
+
+model ApiKeyUsageMetric {
+  id        String   @id @default(cuid())
+  apiKeyId  String
+  date      DateTime
+  requests  Int      @default(0)
+  errors    Int      @default(0)
+  metadata  Json     @default("{}")
+
+  apiKey    ApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@unique([apiKeyId, date])
+  @@map("api_key_usage_metrics")
+}
+
+// Billing & Subscription
+model Subscription {
+  id             String   @id @default(cuid())
+  organizationId String   @unique
+  plan           String
+  status         String
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean @default(false)
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+model UsageMetric {
+  id             String   @id @default(cuid())
+  organizationId String
+  date           DateTime
+  metric         String
+  value          Float
+  metadata       Json     @default("{}")
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, date, metric])
+  @@map("usage_metrics")
+}
+
+// Audit & Security
+model AuditLog {
+  id             String   @id @default(cuid())
+  userId         String?
+  organizationId String
+  action         String
+  resource       String
+  resourceId     String?
+  details        Json     @default("{}")
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  user           User?        @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("audit_logs")
+}
+
+// Human-in-the-Loop
+model HumanInputRequest {
+  id          String   @id @default(cuid())
+  workflowExecutionId String?
+  requestId   String   @unique
+  prompt      String
+  context     Json     @default("{}")
+  response    Json?
+  status      String   @default("pending")
+  assignedTo  String?
+  timeout     DateTime?
+  createdAt   DateTime @default(now())
+  respondedAt DateTime?
+
+  @@map("human_input_requests")
+}
+
+// Templates & Marketplace
+model Template {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  type        String   // agent, tool, workflow
+  category    String?
+  tags        String[] @default([])
+  content     Json
+  metadata    Json     @default("{}")
+  isPublic    Boolean  @default(false)
+  downloads   Int      @default(0)
+  rating      Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Ownership
+  userId      String
+  user        User @relation(fields: [userId], references: [id])
+
+  @@map("templates")
 }
