@@ -1,647 +1,1007 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { useToast } from '@/components/ui/use-toast';
+import { useApixEvents, useApixPublish } from '@/lib/apix/hooks';
+import { APIX_CHANNELS, ApixEvent } from '@/lib/apix/types';
 import { 
-  Play, 
-  Pause, 
-  Square, 
+  Activity, 
+  Bot, 
+  Zap, 
   Clock, 
-  CheckCircle, 
+  CheckCircle2, 
   XCircle, 
-  AlertTriangle,
-  Activity,
-  Eye,
-  Zap,
-  BarChart3,
+  AlertCircle, 
   RefreshCw,
-  Maximize2,
-  Minimize2,
-  Filter,
-  Search
+  BarChart3,
+  Layers,
+  Cpu,
+  Timer,
+  Pause,
+  Play,
+  StopCircle,
+  Eye,
+  Download,
+  Filter
 } from 'lucide-react';
-import { useApixEvents, APIX_CHANNELS } from '@/lib/apix';
-import { workflowService } from '@/lib/services/workflow-service';
-import { Workflow, WorkflowExecution, WorkflowExecutionStatus } from '@/lib/workflows/types';
-import { cn } from '@/lib/utils';
 
-interface WorkflowExecutionMonitorProps {
-  workflow: Workflow;
-  currentExecution?: WorkflowExecution | null;
-  isExecuting?: boolean;
+interface ExecutionMonitorProps {
+  type?: 'agent' | 'workflow' | 'tool' | 'all';
+  entityId?: string;
+  maxItems?: number;
+  showControls?: boolean;
+  showDetails?: boolean;
+  onExecutionSelect?: (execution: any) => void;
   className?: string;
 }
 
-interface NodeExecutionState {
-  nodeId: string;
-  nodeName: string;
-  status: WorkflowExecutionStatus;
-  startedAt?: Date;
-  completedAt?: Date;
-  duration?: number;
-  input?: any;
-  output?: any;
-  error?: string;
-  progress?: number;
-  retryCount?: number;
-  logs: Array<{
-    timestamp: Date;
-    level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
-    message: string;
-  }>;
-}
+export default function ExecutionMonitor({
+  type = 'all',
+  entityId,
+  maxItems = 50,
+  showControls = true,
+  showDetails = true,
+  onExecutionSelect,
+  className = ''
+}: ExecutionMonitorProps) {
+  const { toast } = useToast();
+  const publish = useApixPublish();
+  
+  const [activeTab, setActiveTab] = useState<string>(type !== 'all' ? type : 'all');
+  const [selectedExecution, setSelectedExecution] = useState<string | null>(null);
+  const [isPolling, setIsPolling] = useState<boolean>(true);
+  const [pollingInterval, setPollingInterval] = useState<number>(5000);
+  const [filter, setFilter] = useState<string>('all'); // 'all', 'running', 'completed', 'failed'
 
-interface ExecutionMetrics {
-  totalNodes: number;
-  completedNodes: number;
-  failedNodes: number;
-  runningNodes: number;
-  pendingNodes: number;
-  totalDuration: number;
-  averageNodeDuration: number;
-  successRate: number;
-  throughput: number;
-}
-
-export default function WorkflowExecutionMonitor({ 
-  workflow, 
-  currentExecution, 
-  isExecuting = false,
-  className = '' 
-}: WorkflowExecutionMonitorProps) {
-  const [nodeStates, setNodeStates] = useState<Record<string, NodeExecutionState>>({});
-  const [executionHistory, setExecutionHistory] = useState<WorkflowExecution[]>([]);
-  const [metrics, setMetrics] = useState<ExecutionMetrics | null>(null);
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [autoScroll, setAutoScroll] = useState(true);
-  const [showOnlyActive, setShowOnlyActive] = useState(false);
-
-  // Subscribe to workflow execution events
-  const executionEvents = useApixEvents({
-    channel: APIX_CHANNELS.WORKFLOW_EVENTS,
-    filters: { workflowId: workflow.id }
+  // Subscribe to execution events
+  const agentEvents = useApixEvents({
+    channel: APIX_CHANNELS.AGENT_EVENTS,
+    includeHistory: true,
+    historyLimit: maxItems
   });
 
-  useEffect(() => {
-    initializeNodeStates();
-    loadExecutionHistory();
-  }, [workflow]);
+  const workflowEvents = useApixEvents({
+    channel: APIX_CHANNELS.WORKFLOW_EVENTS,
+    includeHistory: true,
+    historyLimit: maxItems
+  });
 
-  useEffect(() => {
-    if (currentExecution) {
-      updateFromExecution(currentExecution);
-    }
-  }, [currentExecution]);
+  const toolEvents = useApixEvents({
+    channel: APIX_CHANNELS.TOOL_EVENTS,
+    includeHistory: true,
+    historyLimit: maxItems
+  });
 
-  useEffect(() => {
-    // Process real-time execution events
-    executionEvents.forEach(event => {
-      switch (event.type) {
-        case 'WORKFLOW_EXECUTION_STARTED':
-          handleExecutionStarted(event.data);
-          break;
-        case 'WORKFLOW_EXECUTION_COMPLETED':
-          handleExecutionCompleted(event.data);
-          break;
-        case 'WORKFLOW_EXECUTION_FAILED':
-          handleExecutionFailed(event.data);
-          break;
-        case 'WORKFLOW_NODE_STARTED':
-          handleNodeStarted(event.data);
-          break;
-        case 'WORKFLOW_NODE_COMPLETED':
-          handleNodeCompleted(event.data);
-          break;
-        case 'WORKFLOW_NODE_FAILED':
-          handleNodeFailed(event.data);
-          break;
-        case 'WORKFLOW_NODE_PROGRESS':
-          handleNodeProgress(event.data);
-          break;
-        case 'WORKFLOW_LOG':
-          handleLogEvent(event.data);
-          break;
-      }
-    });
-  }, [executionEvents]);
+  // Process events to track executions
+  const [agentExecutions, setAgentExecutions] = useState<Record<string, any>>({});
+  const [workflowExecutions, setWorkflowExecutions] = useState<Record<string, any>>({});
+  const [toolExecutions, setToolExecutions] = useState<Record<string, any>>({});
 
-  const initializeNodeStates = () => {
-    const initialStates: Record<string, NodeExecutionState> = {};
+  // Process agent events
+  useEffect(() => {
+    const newExecutions = { ...agentExecutions };
     
-    workflow.nodes.forEach(node => {
-      initialStates[node.id] = {
-        nodeId: node.id,
-        nodeName: node.label || `Node ${node.id.slice(0, 8)}`,
-        status: WorkflowExecutionStatus.PENDING,
-        logs: []
-      };
-    });
+    for (const event of agentEvents) {
+      if (event.type === 'AGENT_EXECUTION_STARTED') {
+        newExecutions[event.data.executionId] = {
+          id: event.data.executionId,
+          agentId: event.data.agentId,
+          agentName: event.data.agentName,
+          status: 'running',
+          progress: 0,
+          startedAt: new Date(event.metadata.timestamp),
+          steps: [],
+          input: event.data.input,
+          metadata: event.data.metadata || {}
+        };
+      } else if (event.type === 'AGENT_EXECUTION_PROGRESS') {
+        if (newExecutions[event.data.executionId]) {
+          newExecutions[event.data.executionId] = {
+            ...newExecutions[event.data.executionId],
+            progress: event.data.progress,
+            currentStep: event.data.currentStep,
+            steps: [
+              ...newExecutions[event.data.executionId].steps,
+              {
+                id: event.data.stepId,
+                type: event.data.stepType,
+                status: 'completed',
+                timestamp: new Date(event.metadata.timestamp),
+                data: event.data.stepData
+              }
+            ]
+          };
+        }
+      } else if (event.type === 'AGENT_EXECUTION_COMPLETED') {
+        if (newExecutions[event.data.executionId]) {
+          newExecutions[event.data.executionId] = {
+            ...newExecutions[event.data.executionId],
+            status: 'completed',
+            progress: 100,
+            completedAt: new Date(event.metadata.timestamp),
+            output: event.data.output,
+            duration: event.data.duration,
+            metrics: event.data.metrics
+          };
+        }
+      } else if (event.type === 'AGENT_EXECUTION_FAILED') {
+        if (newExecutions[event.data.executionId]) {
+          newExecutions[event.data.executionId] = {
+            ...newExecutions[event.data.executionId],
+            status: 'failed',
+            error: event.data.error,
+            completedAt: new Date(event.metadata.timestamp),
+            duration: event.data.duration
+          };
+        }
+      }
+    }
+    
+    setAgentExecutions(newExecutions);
+  }, [agentEvents]);
 
-    setNodeStates(initialStates);
-    calculateMetrics(initialStates);
-  };
+  // Process workflow events
+  useEffect(() => {
+    const newExecutions = { ...workflowExecutions };
+    
+    for (const event of workflowEvents) {
+      if (event.type === 'WORKFLOW_STARTED') {
+        newExecutions[event.data.executionId] = {
+          id: event.data.executionId,
+          workflowId: event.data.workflowId,
+          workflowName: event.data.workflowName,
+          status: 'running',
+          progress: 0,
+          startedAt: new Date(event.metadata.timestamp),
+          nodes: {},
+          edges: {},
+          input: event.data.input,
+          metadata: event.data.metadata || {}
+        };
+      } else if (event.type === 'WORKFLOW_NODE_EXECUTED') {
+        if (newExecutions[event.data.executionId]) {
+          const nodes = { ...newExecutions[event.data.executionId].nodes };
+          nodes[event.data.nodeId] = {
+            id: event.data.nodeId,
+            type: event.data.nodeType,
+            status: 'completed',
+            startedAt: new Date(event.data.startedAt || event.metadata.timestamp),
+            completedAt: new Date(event.metadata.timestamp),
+            input: event.data.input,
+            output: event.data.output,
+            duration: event.data.duration
+          };
+          
+          const totalNodes = Object.keys(event.data.nodeStatuses || {}).length;
+          const completedNodes = Object.values(event.data.nodeStatuses || {})
+            .filter(status => status === 'completed' || status === 'failed').length;
+          
+          const progress = totalNodes > 0 ? Math.round((completedNodes / totalNodes) * 100) : 0;
+          
+          newExecutions[event.data.executionId] = {
+            ...newExecutions[event.data.executionId],
+            nodes,
+            progress,
+            nodeStatuses: event.data.nodeStatuses
+          };
+        }
+      } else if (event.type === 'WORKFLOW_NODE_FAILED') {
+        if (newExecutions[event.data.executionId]) {
+          const nodes = { ...newExecutions[event.data.executionId].nodes };
+          nodes[event.data.nodeId] = {
+            id: event.data.nodeId,
+            type: event.data.nodeType,
+            status: 'failed',
+            startedAt: new Date(event.data.startedAt || event.metadata.timestamp),
+            completedAt: new Date(event.metadata.timestamp),
+            input: event.data.input,
+            error: event.data.error,
+            duration: event.data.duration
+          };
+          
+          newExecutions[event.data.executionId] = {
+            ...newExecutions[event.data.executionId],
+            nodes
+          };
+        }
+      } else if (event.type === 'WORKFLOW_COMPLETED') {
+        if (newExecutions[event.data.executionId]) {
+          newExecutions[event.data.executionId] = {
+            ...newExecutions[event.data.executionId],
+            status: 'completed',
+            progress: 100,
+            completedAt: new Date(event.metadata.timestamp),
+            output: event.data.output,
+            duration: event.data.duration,
+            metrics: event.data.metrics
+          };
+        }
+      } else if (event.type === 'WORKFLOW_FAILED') {
+        if (newExecutions[event.data.executionId]) {
+          newExecutions[event.data.executionId] = {
+            ...newExecutions[event.data.executionId],
+            status: 'failed',
+            error: event.data.error,
+            completedAt: new Date(event.metadata.timestamp),
+            duration: event.data.duration
+          };
+        }
+      } else if (event.type === 'WORKFLOW_PAUSED') {
+        if (newExecutions[event.data.executionId]) {
+          newExecutions[event.data.executionId] = {
+            ...newExecutions[event.data.executionId],
+            status: 'paused',
+            pausedAt: new Date(event.metadata.timestamp),
+            pauseReason: event.data.reason
+          };
+        }
+      } else if (event.type === 'WORKFLOW_RESUMED') {
+        if (newExecutions[event.data.executionId]) {
+          newExecutions[event.data.executionId] = {
+            ...newExecutions[event.data.executionId],
+            status: 'running',
+            resumedAt: new Date(event.metadata.timestamp)
+          };
+        }
+      }
+    }
+    
+    setWorkflowExecutions(newExecutions);
+  }, [workflowEvents]);
 
-  const updateFromExecution = (execution: WorkflowExecution) => {
-    const updatedStates = { ...nodeStates };
-
-    execution.nodeExecutions.forEach(nodeExec => {
-      if (updatedStates[nodeExec.nodeId]) {
-        updatedStates[nodeExec.nodeId] = {
-          ...updatedStates[nodeExec.nodeId],
-          status: nodeExec.status,
-          startedAt: nodeExec.startedAt,
-          completedAt: nodeExec.completedAt,
-          duration: nodeExec.duration,
-          input: nodeExec.input,
-          output: nodeExec.output,
-          error: nodeExec.error,
-          retryCount: nodeExec.retryCount
+  // Process tool events
+  useEffect(() => {
+    const newExecutions = { ...toolExecutions };
+    
+    for (const event of toolEvents) {
+      if (event.type === 'TOOL_EXECUTED') {
+        newExecutions[event.data.executionId] = {
+          id: event.data.executionId,
+          toolId: event.data.toolId,
+          toolName: event.data.toolName,
+          status: 'completed',
+          startedAt: new Date(event.data.startedAt || event.metadata.timestamp),
+          completedAt: new Date(event.metadata.timestamp),
+          input: event.data.input,
+          output: event.data.output,
+          duration: event.data.duration,
+          metadata: event.data.metadata || {}
+        };
+      } else if (event.type === 'TOOL_ERROR') {
+        newExecutions[event.data.executionId] = {
+          id: event.data.executionId,
+          toolId: event.data.toolId,
+          toolName: event.data.toolName,
+          status: 'failed',
+          startedAt: new Date(event.data.startedAt || event.metadata.timestamp),
+          completedAt: new Date(event.metadata.timestamp),
+          input: event.data.input,
+          error: event.data.error,
+          duration: event.data.duration,
+          metadata: event.data.metadata || {}
         };
       }
-    });
+    }
+    
+    setToolExecutions(newExecutions);
+  }, [toolEvents]);
 
-    setNodeStates(updatedStates);
-    calculateMetrics(updatedStates);
-  };
+  // Polling for updates
+  useEffect(() => {
+    if (!isPolling) return;
+    
+    const interval = setInterval(() => {
+      if (activeTab === 'agent' || activeTab === 'all') {
+        publish({
+          type: 'AGENT_EXECUTIONS_REQUEST',
+          channel: APIX_CHANNELS.AGENT_EVENTS,
+          data: { limit: maxItems, entityId }
+        });
+      }
+      
+      if (activeTab === 'workflow' || activeTab === 'all') {
+        publish({
+          type: 'WORKFLOW_EXECUTIONS_REQUEST',
+          channel: APIX_CHANNELS.WORKFLOW_EVENTS,
+          data: { limit: maxItems, entityId }
+        });
+      }
+      
+      if (activeTab === 'tool' || activeTab === 'all') {
+        publish({
+          type: 'TOOL_EXECUTIONS_REQUEST',
+          channel: APIX_CHANNELS.TOOL_EVENTS,
+          data: { limit: maxItems, entityId }
+        });
+      }
+    }, pollingInterval);
+    
+    return () => clearInterval(interval);
+  }, [isPolling, pollingInterval, activeTab, publish, maxItems, entityId]);
 
-  const loadExecutionHistory = async () => {
-    try {
-      const response = await workflowService.getWorkflowExecutions(workflow.id, {
-        limit: 10
+  // Initial data load
+  useEffect(() => {
+    // Request initial data
+    if (type === 'agent' || type === 'all') {
+      publish({
+        type: 'AGENT_EXECUTIONS_REQUEST',
+        channel: APIX_CHANNELS.AGENT_EVENTS,
+        data: { limit: maxItems, entityId }
       });
-      setExecutionHistory(response.executions);
-    } catch (error) {
-      console.error('Failed to load execution history:', error);
+    }
+    
+    if (type === 'workflow' || type === 'all') {
+      publish({
+        type: 'WORKFLOW_EXECUTIONS_REQUEST',
+        channel: APIX_CHANNELS.WORKFLOW_EVENTS,
+        data: { limit: maxItems, entityId }
+      });
+    }
+    
+    if (type === 'tool' || type === 'all') {
+      publish({
+        type: 'TOOL_EXECUTIONS_REQUEST',
+        channel: APIX_CHANNELS.TOOL_EVENTS,
+        data: { limit: maxItems, entityId }
+      });
+    }
+  }, [type, publish, maxItems, entityId]);
+
+  // Handle execution selection
+  const handleExecutionSelect = (executionId: string, executionType: string) => {
+    setSelectedExecution(executionId);
+    
+    let execution;
+    switch (executionType) {
+      case 'agent':
+        execution = agentExecutions[executionId];
+        break;
+      case 'workflow':
+        execution = workflowExecutions[executionId];
+        break;
+      case 'tool':
+        execution = toolExecutions[executionId];
+        break;
+    }
+    
+    if (execution && onExecutionSelect) {
+      onExecutionSelect({ ...execution, type: executionType });
     }
   };
 
-  const calculateMetrics = (states: Record<string, NodeExecutionState>) => {
-    const nodes = Object.values(states);
-    const totalNodes = nodes.length;
-    const completedNodes = nodes.filter(n => n.status === WorkflowExecutionStatus.COMPLETED).length;
-    const failedNodes = nodes.filter(n => n.status === WorkflowExecutionStatus.FAILED).length;
-    const runningNodes = nodes.filter(n => n.status === WorkflowExecutionStatus.RUNNING).length;
-    const pendingNodes = nodes.filter(n => n.status === WorkflowExecutionStatus.PENDING).length;
-
-    const completedWithDuration = nodes.filter(n => n.duration && n.status === WorkflowExecutionStatus.COMPLETED);
-    const totalDuration = completedWithDuration.reduce((sum, n) => sum + (n.duration || 0), 0);
-    const averageNodeDuration = completedWithDuration.length > 0 ? totalDuration / completedWithDuration.length : 0;
-
-    const successRate = totalNodes > 0 ? (completedNodes / (completedNodes + failedNodes)) * 100 : 0;
-    const throughput = currentExecution ? 
-      (completedNodes / ((Date.now() - currentExecution.startedAt.getTime()) / 1000)) : 0;
-
-    setMetrics({
-      totalNodes,
-      completedNodes,
-      failedNodes,
-      runningNodes,
-      pendingNodes,
-      totalDuration,
-      averageNodeDuration,
-      successRate: isNaN(successRate) ? 0 : successRate,
-      throughput
+  // Toggle polling
+  const togglePolling = () => {
+    setIsPolling(!isPolling);
+    
+    toast({
+      title: isPolling ? 'Monitoring paused' : 'Monitoring resumed',
+      description: isPolling 
+        ? 'Real-time updates have been paused.' 
+        : 'Real-time updates have been resumed.',
+      variant: isPolling ? 'default' : 'default'
     });
   };
 
-  const handleExecutionStarted = (data: any) => {
-    const updatedStates = { ...nodeStates };
-    Object.keys(updatedStates).forEach(nodeId => {
-      updatedStates[nodeId].status = WorkflowExecutionStatus.PENDING;
-      updatedStates[nodeId].logs = [];
+  // Export executions data
+  const exportData = () => {
+    const data = {
+      agents: agentExecutions,
+      workflows: workflowExecutions,
+      tools: toolExecutions,
+      exportedAt: new Date().toISOString()
+    };
+    
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `executions-${new Date().toISOString()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    toast({
+      title: 'Export successful',
+      description: 'Execution data has been exported to JSON.',
     });
-    setNodeStates(updatedStates);
   };
 
-  const handleExecutionCompleted = (data: any) => {
-    loadExecutionHistory();
+  // Filter executions based on status
+  const getFilteredExecutions = (executions: Record<string, any>) => {
+    return Object.values(executions)
+      .filter(execution => {
+        if (filter === 'all') return true;
+        return execution.status === filter;
+      })
+      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
   };
 
-  const handleExecutionFailed = (data: any) => {
-    loadExecutionHistory();
-  };
-
-  const handleNodeStarted = (data: any) => {
-    setNodeStates(prev => ({
-      ...prev,
-      [data.nodeId]: {
-        ...prev[data.nodeId],
-        status: WorkflowExecutionStatus.RUNNING,
-        startedAt: new Date(data.startedAt),
-        progress: 0
-      }
-    }));
-  };
-
-  const handleNodeCompleted = (data: any) => {
-    setNodeStates(prev => ({
-      ...prev,
-      [data.nodeId]: {
-        ...prev[data.nodeId],
-        status: WorkflowExecutionStatus.COMPLETED,
-        completedAt: new Date(data.completedAt),
-        duration: data.duration,
-        output: data.output,
-        progress: 100
-      }
-    }));
-  };
-
-  const handleNodeFailed = (data: any) => {
-    setNodeStates(prev => ({
-      ...prev,
-      [data.nodeId]: {
-        ...prev[data.nodeId],
-        status: WorkflowExecutionStatus.FAILED,
-        completedAt: new Date(data.completedAt),
-        duration: data.duration,
-        error: data.error,
-        progress: 0
-      }
-    }));
-  };
-
-  const handleNodeProgress = (data: any) => {
-    setNodeStates(prev => ({
-      ...prev,
-      [data.nodeId]: {
-        ...prev[data.nodeId],
-        progress: data.progress
-      }
-    }));
-  };
-
-  const handleLogEvent = (data: any) => {
-    if (data.nodeId && nodeStates[data.nodeId]) {
-      setNodeStates(prev => ({
-        ...prev,
-        [data.nodeId]: {
-          ...prev[data.nodeId],
-          logs: [
-            ...prev[data.nodeId].logs,
-            {
-              timestamp: new Date(data.timestamp),
-              level: data.level,
-              message: data.message
-            }
-          ].slice(-50) // Keep only last 50 logs per node
-        }
-      }));
-    }
-  };
-
-  const getStatusIcon = (status: WorkflowExecutionStatus) => {
+  // Render status badge
+  const renderStatusBadge = (status: string) => {
     switch (status) {
-      case WorkflowExecutionStatus.PENDING:
-        return <Clock className="h-4 w-4 text-gray-500" />;
-      case WorkflowExecutionStatus.RUNNING:
-        return <Activity className="h-4 w-4 text-blue-500 animate-pulse" />;
-      case WorkflowExecutionStatus.COMPLETED:
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case WorkflowExecutionStatus.FAILED:
-        return <XCircle className="h-4 w-4 text-red-500" />;
-      case WorkflowExecutionStatus.CANCELLED:
-        return <Square className="h-4 w-4 text-orange-500" />;
-      case WorkflowExecutionStatus.PAUSED:
-        return <Pause className="h-4 w-4 text-yellow-500" />;
+      case 'running':
+        return (
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 flex items-center gap-1">
+            <RefreshCw className="h-3 w-3 animate-spin" />
+            Running
+          </Badge>
+        );
+      case 'completed':
+        return (
+          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 flex items-center gap-1">
+            <CheckCircle2 className="h-3 w-3" />
+            Completed
+          </Badge>
+        );
+      case 'failed':
+        return (
+          <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 flex items-center gap-1">
+            <XCircle className="h-3 w-3" />
+            Failed
+          </Badge>
+        );
+      case 'paused':
+        return (
+          <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 flex items-center gap-1">
+            <Pause className="h-3 w-3" />
+            Paused
+          </Badge>
+        );
       default:
-        return <Clock className="h-4 w-4 text-gray-500" />;
+        return (
+          <Badge variant="outline" className="flex items-center gap-1">
+            <Clock className="h-3 w-3" />
+            {status}
+          </Badge>
+        );
     }
   };
 
-  const getStatusBadge = (status: WorkflowExecutionStatus) => {
-    const variants = {
-      [WorkflowExecutionStatus.PENDING]: 'secondary',
-      [WorkflowExecutionStatus.RUNNING]: 'default',
-      [WorkflowExecutionStatus.COMPLETED]: 'default',
-      [WorkflowExecutionStatus.FAILED]: 'destructive',
-      [WorkflowExecutionStatus.CANCELLED]: 'outline',
-      [WorkflowExecutionStatus.PAUSED]: 'outline'
-    };
-
-    const colors = {
-      [WorkflowExecutionStatus.PENDING]: 'bg-gray-100 text-gray-800',
-      [WorkflowExecutionStatus.RUNNING]: 'bg-blue-100 text-blue-800',
-      [WorkflowExecutionStatus.COMPLETED]: 'bg-green-100 text-green-800',
-      [WorkflowExecutionStatus.FAILED]: 'bg-red-100 text-red-800',
-      [WorkflowExecutionStatus.CANCELLED]: 'bg-orange-100 text-orange-800',
-      [WorkflowExecutionStatus.PAUSED]: 'bg-yellow-100 text-yellow-800'
-    };
-
+  // Render execution item
+  const renderExecutionItem = (execution: any, type: string) => {
+    const isSelected = selectedExecution === execution.id;
+    
     return (
-      <Badge className={colors[status]}>
-        {status.toLowerCase()}
-      </Badge>
+      <div
+        key={execution.id}
+        className={`p-3 border rounded-md mb-2 cursor-pointer transition-colors ${
+          isSelected ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-gray-300'
+        }`}
+        onClick={() => handleExecutionSelect(execution.id, type)}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            {type === 'agent' && <Bot className="h-5 w-5 text-blue-500" />}
+            {type === 'workflow' && <Layers className="h-5 w-5 text-purple-500" />}
+            {type === 'tool' && <Zap className="h-5 w-5 text-yellow-500" />}
+            <div>
+              <p className="font-medium">
+                {type === 'agent' && (execution.agentName || 'Agent')}
+                {type === 'workflow' && (execution.workflowName || 'Workflow')}
+                {type === 'tool' && (execution.toolName || 'Tool')}
+              </p>
+              <p className="text-xs text-gray-500">
+                ID: {execution.id.substring(0, 8)}...
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col items-end">
+            {renderStatusBadge(execution.status)}
+            <span className="text-xs text-gray-500 mt-1">
+              {new Date(execution.startedAt).toLocaleTimeString()}
+            </span>
+          </div>
+        </div>
+        
+        {execution.status === 'running' && (
+          <div className="mt-2">
+            <Progress value={execution.progress || 0} className="h-1" />
+            <div className="flex justify-between mt-1">
+              <span className="text-xs text-gray-500">Progress</span>
+              <span className="text-xs font-medium">{execution.progress || 0}%</span>
+            </div>
+          </div>
+        )}
+        
+        {execution.status === 'completed' && execution.duration && (
+          <div className="flex items-center mt-2 text-xs text-gray-500">
+            <Timer className="h-3 w-3 mr-1" />
+            Completed in {(execution.duration / 1000).toFixed(2)}s
+          </div>
+        )}
+        
+        {execution.status === 'failed' && execution.error && (
+          <div className="flex items-center mt-2 text-xs text-red-500 truncate">
+            <AlertCircle className="h-3 w-3 mr-1 flex-shrink-0" />
+            {execution.error.substring(0, 50)}{execution.error.length > 50 ? '...' : ''}
+          </div>
+        )}
+      </div>
     );
   };
 
-  const formatDuration = (ms?: number) => {
-    if (!ms) return '-';
-    if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    return `${(ms / 60000).toFixed(1)}m`;
-  };
-
-  const getOverallProgress = () => {
-    if (!metrics) return 0;
-    return (metrics.completedNodes / metrics.totalNodes) * 100;
-  };
-
-  const filteredNodes = Object.values(nodeStates).filter(node => {
-    if (showOnlyActive) {
-      return node.status === WorkflowExecutionStatus.RUNNING || 
-             node.status === WorkflowExecutionStatus.FAILED ||
-             node.logs.length > 0;
-    }
-    return true;
-  });
-
-  return (
-    <div className={cn('space-y-6 bg-background', className)}>
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Eye className="h-6 w-6" />
-            Execution Monitor
-          </h2>
-          <p className="text-muted-foreground">
-            Real-time workflow execution monitoring and debugging
+  // Render execution details
+  const renderExecutionDetails = () => {
+    if (!selectedExecution) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-center p-8">
+          <Eye className="h-12 w-12 text-gray-300 mb-2" />
+          <h3 className="text-lg font-medium text-gray-500">Select an execution to view details</h3>
+          <p className="text-sm text-gray-400 mt-1">
+            Click on any execution from the list to see detailed information
           </p>
         </div>
-        
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowOnlyActive(!showOnlyActive)}
-          >
-            <Filter className="h-4 w-4 mr-2" />
-            {showOnlyActive ? 'Show All' : 'Active Only'}
-          </Button>
-          
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsExpanded(!isExpanded)}
-          >
-            {isExpanded ? (
-              <Minimize2 className="h-4 w-4 mr-2" />
-            ) : (
-              <Maximize2 className="h-4 w-4 mr-2" />
-            )}
-            {isExpanded ? 'Collapse' : 'Expand'}
-          </Button>
+      );
+    }
+    
+    let execution;
+    let executionType;
+    
+    if (selectedExecution in agentExecutions) {
+      execution = agentExecutions[selectedExecution];
+      executionType = 'agent';
+    } else if (selectedExecution in workflowExecutions) {
+      execution = workflowExecutions[selectedExecution];
+      executionType = 'workflow';
+    } else if (selectedExecution in toolExecutions) {
+      execution = toolExecutions[selectedExecution];
+      executionType = 'tool';
+    }
+    
+    if (!execution) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-center p-8">
+          <AlertCircle className="h-12 w-12 text-red-300 mb-2" />
+          <h3 className="text-lg font-medium text-gray-500">Execution not found</h3>
         </div>
-      </div>
-
-      {/* Execution Status */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Overall Progress</p>
-                <p className="text-2xl font-bold">{getOverallProgress().toFixed(1)}%</p>
+      );
+    }
+    
+    return (
+      <div className="p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-medium">
+              {executionType === 'agent' && (execution.agentName || 'Agent')}
+              {executionType === 'workflow' && (execution.workflowName || 'Workflow')}
+              {executionType === 'tool' && (execution.toolName || 'Tool')}
+              {' '}Execution
+            </h3>
+            <p className="text-sm text-gray-500">ID: {execution.id}</p>
+          </div>
+          <div>
+            {renderStatusBadge(execution.status)}
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-medium text-gray-500">Started</h4>
+                <Clock className="h-4 w-4 text-gray-400" />
               </div>
-              <BarChart3 className="h-8 w-8 text-blue-500" />
-            </div>
-            <Progress value={getOverallProgress()} className="mt-2" />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Active Nodes</p>
-                <p className="text-2xl font-bold">{metrics?.runningNodes || 0}</p>
+              <p className="text-lg font-medium mt-1">
+                {new Date(execution.startedAt).toLocaleString()}
+              </p>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-medium text-gray-500">Duration</h4>
+                <Timer className="h-4 w-4 text-gray-400" />
               </div>
-              <Activity className="h-8 w-8 text-green-500" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Success Rate</p>
-                <p className="text-2xl font-bold">{metrics?.successRate.toFixed(1) || 0}%</p>
+              <p className="text-lg font-medium mt-1">
+                {execution.duration 
+                  ? `${(execution.duration / 1000).toFixed(2)}s` 
+                  : execution.status === 'running'
+                    ? 'Running...'
+                    : 'N/A'
+                }
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+        
+        {execution.status === 'running' && (
+          <Card className="mb-4">
+            <CardContent className="p-4">
+              <h4 className="text-sm font-medium text-gray-500 mb-2">Progress</h4>
+              <Progress value={execution.progress || 0} className="h-2" />
+              <div className="flex justify-between mt-2">
+                <span className="text-sm">{execution.progress || 0}% Complete</span>
+                {executionType === 'workflow' && execution.currentNode && (
+                  <span className="text-sm text-gray-500">
+                    Current: {execution.currentNode}
+                  </span>
+                )}
               </div>
-              <CheckCircle className="h-8 w-8 text-green-500" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Avg Duration</p>
-                <p className="text-2xl font-bold">{formatDuration(metrics?.averageNodeDuration)}</p>
+            </CardContent>
+          </Card>
+        )}
+        
+        {execution.status === 'failed' && execution.error && (
+          <Card className="mb-4 border-red-200">
+            <CardContent className="p-4">
+              <div className="flex items-center text-red-600 mb-2">
+                <AlertCircle className="h-5 w-5 mr-2" />
+                <h4 className="font-medium">Error</h4>
               </div>
-              <Clock className="h-8 w-8 text-orange-500" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Node Execution States */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Node List */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5" />
-              Node Execution States
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <ScrollArea className={cn('p-4', isExpanded ? 'h-[800px]' : 'h-[400px]')}>
-              <div className="space-y-2">
-                {filteredNodes.map(node => (
-                  <div
-                    key={node.nodeId}
-                    className={cn(
-                      'flex items-center justify-between p-3 border rounded-lg cursor-pointer transition-colors',
-                      selectedNode === node.nodeId ? 'bg-muted border-primary' : 'hover:bg-muted/50'
-                    )}
-                    onClick={() => setSelectedNode(node.nodeId)}
-                  >
-                    <div className="flex items-center gap-3">
-                      {getStatusIcon(node.status)}
-                      <div>
-                        <p className="font-medium">{node.nodeName}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {node.nodeId.slice(0, 8)}...
-                        </p>
+              <p className="text-sm text-red-600 whitespace-pre-wrap">
+                {execution.error}
+              </p>
+            </CardContent>
+          </Card>
+        )}
+        
+        {executionType === 'workflow' && execution.nodes && (
+          <Card className="mb-4">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Nodes</CardTitle>
+              <CardDescription>Execution path and node statuses</CardDescription>
+            </CardHeader>
+            <CardContent className="p-4">
+              <ScrollArea className="h-64">
+                <div className="space-y-2">
+                  {Object.values(execution.nodes).map((node: any) => (
+                    <div key={node.id} className="border rounded-md p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          {node.type === 'agent' && <Bot className="h-4 w-4 text-blue-500 mr-2" />}
+                          {node.type === 'tool' && <Zap className="h-4 w-4 text-yellow-500 mr-2" />}
+                          {node.type === 'condition' && <GitBranch className="h-4 w-4 text-orange-500 mr-2" />}
+                          {node.type === 'loop' && <RefreshCw className="h-4 w-4 text-indigo-500 mr-2" />}
+                          {node.type === 'human_input' && <User className="h-4 w-4 text-pink-500 mr-2" />}
+                          <span className="font-medium">{node.id}</span>
+                        </div>
+                        {renderStatusBadge(node.status)}
                       </div>
-                    </div>
-                    
-                    <div className="text-right">
-                      {getStatusBadge(node.status)}
+                      
                       {node.duration && (
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {formatDuration(node.duration)}
-                        </p>
-                      )}
-                      {node.progress !== undefined && node.status === WorkflowExecutionStatus.RUNNING && (
-                        <div className="w-20 mt-1">
-                          <Progress value={node.progress} className="h-1" />
+                        <div className="flex items-center mt-2 text-xs text-gray-500">
+                          <Timer className="h-3 w-3 mr-1" />
+                          {(node.duration / 1000).toFixed(2)}s
                         </div>
                       )}
                     </div>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-
-        {/* Node Details */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Search className="h-5 w-5" />
-              Node Details
-              {selectedNode && (
-                <Badge variant="outline">
-                  {nodeStates[selectedNode]?.nodeName}
-                </Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {selectedNode && nodeStates[selectedNode] ? (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Status</label>
-                    <div className="mt-1">
-                      {getStatusBadge(nodeStates[selectedNode].status)}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Duration</label>
-                    <p className="mt-1 font-medium">
-                      {formatDuration(nodeStates[selectedNode].duration)}
-                    </p>
-                  </div>
+                  ))}
                 </div>
-
-                {nodeStates[selectedNode].startedAt && (
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Started At</label>
-                    <p className="mt-1 font-medium">
-                      {nodeStates[selectedNode].startedAt!.toLocaleString()}
-                    </p>
-                  </div>
-                )}
-
-                {nodeStates[selectedNode].error && (
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Error</label>
-                    <div className="mt-1 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-800">
-                      {nodeStates[selectedNode].error}
-                    </div>
-                  </div>
-                )}
-
-                {nodeStates[selectedNode].logs.length > 0 && (
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Recent Logs</label>
-                    <ScrollArea className="mt-1 h-32 border rounded">
-                      <div className="p-2 space-y-1">
-                        {nodeStates[selectedNode].logs.slice(-10).map((log, index) => (
-                          <div key={index} className="text-xs">
-                            <span className="text-muted-foreground">
-                              {log.timestamp.toLocaleTimeString()}
-                            </span>
-                            <span className={cn(
-                              'ml-2 font-medium',
-                              log.level === 'ERROR' ? 'text-red-600' :
-                              log.level === 'WARN' ? 'text-yellow-600' :
-                              log.level === 'INFO' ? 'text-blue-600' : 'text-gray-600'
-                            )}>
-                              [{log.level}]
-                            </span>
-                            <span className="ml-2">{log.message}</span>
-                          </div>
-                        ))}
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        )}
+        
+        {executionType === 'agent' && execution.steps && execution.steps.length > 0 && (
+          <Card className="mb-4">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Steps</CardTitle>
+              <CardDescription>Agent execution steps</CardDescription>
+            </CardHeader>
+            <CardContent className="p-4">
+              <ScrollArea className="h-64">
+                <div className="space-y-2">
+                  {execution.steps.map((step: any, index: number) => (
+                    <div key={index} className="border rounded-md p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <span className="font-medium">{step.type}</span>
+                        </div>
+                        {renderStatusBadge(step.status || 'completed')}
                       </div>
-                    </ScrollArea>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {new Date(step.timestamp).toLocaleString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        )}
+        
+        {execution.metrics && (
+          <Card className="mb-4">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Metrics</CardTitle>
+              <CardDescription>Performance and resource usage</CardDescription>
+            </CardHeader>
+            <CardContent className="p-4">
+              <div className="grid grid-cols-2 gap-4">
+                {execution.metrics.totalTokens !== undefined && (
+                  <div>
+                    <div className="text-sm text-gray-500">Tokens Used</div>
+                    <div className="text-lg font-medium">{execution.metrics.totalTokens}</div>
                   </div>
                 )}
-
-                {nodeStates[selectedNode].retryCount && nodeStates[selectedNode].retryCount! > 0 && (
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Retry Count</label>
-                    <p className="mt-1 font-medium">
-                      {nodeStates[selectedNode].retryCount}
-                    </p>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-32">
-                <div className="text-center">
-                  <Search className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                  <p className="text-muted-foreground">Select a node to view details</p>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Recent Executions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5" />
-            Recent Executions
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            {executionHistory.slice(0, 5).map(execution => (
-              <div key={execution.id} className="flex items-center justify-between p-3 border rounded-lg">
-                <div className="flex items-center gap-3">
-                  {getStatusIcon(execution.status)}
-                  <div>
-                    <p className="font-medium">
-                      Execution {execution.id.slice(0, 8)}...
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {execution.startedAt.toLocaleString()}
-                    </p>
-                  </div>
-                </div>
                 
-                <div className="text-right">
-                  {getStatusBadge(execution.status)}
-                  {execution.duration && (
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {formatDuration(execution.duration)}
-                    </p>
-                  )}
+                {execution.metrics.totalCost !== undefined && (
+                  <div>
+                    <div className="text-sm text-gray-500">Cost</div>
+                    <div className="text-lg font-medium">${execution.metrics.totalCost.toFixed(6)}</div>
+                  </div>
+                )}
+                
+                {execution.metrics.memoryPeak !== undefined && (
+                  <div>
+                    <div className="text-sm text-gray-500">Memory Peak</div>
+                    <div className="text-lg font-medium">{(execution.metrics.memoryPeak / (1024 * 1024)).toFixed(2)} MB</div>
+                  </div>
+                )}
+                
+                {execution.metrics.cpuTime !== undefined && (
+                  <div>
+                    <div className="text-sm text-gray-500">CPU Time</div>
+                    <div className="text-lg font-medium">{(execution.metrics.cpuTime / 1000).toFixed(2)}s</div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        
+        <div className="grid grid-cols-2 gap-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Input</CardTitle>
+            </CardHeader>
+            <CardContent className="p-4">
+              <ScrollArea className="h-48">
+                <pre className="text-xs whitespace-pre-wrap">
+                  {JSON.stringify(execution.input, null, 2)}
+                </pre>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">
+                {execution.status === 'completed' ? 'Output' : 'Result'}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4">
+              <ScrollArea className="h-48">
+                <pre className="text-xs whitespace-pre-wrap">
+                  {execution.output 
+                    ? JSON.stringify(execution.output, null, 2)
+                    : execution.error
+                      ? JSON.stringify({ error: execution.error }, null, 2)
+                      : execution.status === 'running'
+                        ? 'Execution in progress...'
+                        : 'No output available'
+                  }
+                </pre>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <Card className={`w-full ${className}`}>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>Execution Monitor</CardTitle>
+            <CardDescription>
+              Real-time monitoring of executions
+            </CardDescription>
+          </div>
+          {showControls && (
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={togglePolling}
+              >
+                {isPolling ? (
+                  <>
+                    <Pause className="h-4 w-4 mr-1" />
+                    Pause
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-1" />
+                    Resume
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={exportData}
+              >
+                <Download className="h-4 w-4 mr-1" />
+                Export
+              </Button>
+            </div>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-col md:flex-row h-[600px] gap-4">
+          <div className="w-full md:w-1/3 border rounded-md overflow-hidden">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <div className="border-b px-3">
+                <TabsList className="grid w-full grid-cols-4">
+                  {type === 'all' && <TabsTrigger value="all">All</TabsTrigger>}
+                  {(type === 'agent' || type === 'all') && <TabsTrigger value="agent">Agents</TabsTrigger>}
+                  {(type === 'workflow' || type === 'all') && <TabsTrigger value="workflow">Workflows</TabsTrigger>}
+                  {(type === 'tool' || type === 'all') && <TabsTrigger value="tool">Tools</TabsTrigger>}
+                </TabsList>
+              </div>
+              
+              <div className="border-b p-2 bg-gray-50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={`text-xs h-7 ${filter === 'all' ? 'bg-gray-200' : ''}`}
+                      onClick={() => setFilter('all')}
+                    >
+                      All
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={`text-xs h-7 ${filter === 'running' ? 'bg-gray-200' : ''}`}
+                      onClick={() => setFilter('running')}
+                    >
+                      Running
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={`text-xs h-7 ${filter === 'completed' ? 'bg-gray-200' : ''}`}
+                      onClick={() => setFilter('completed')}
+                    >
+                      Completed
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={`text-xs h-7 ${filter === 'failed' ? 'bg-gray-200' : ''}`}
+                      onClick={() => setFilter('failed')}
+                    >
+                      Failed
+                    </Button>
+                  </div>
+                  <Button variant="ghost" size="sm" className="text-xs h-7">
+                    <Filter className="h-3 w-3" />
+                  </Button>
                 </div>
               </div>
-            ))}
-            
-            {executionHistory.length === 0 && (
-              <div className="flex items-center justify-center h-16">
-                <p className="text-muted-foreground">No recent executions</p>
-              </div>
+              
+              <TabsContent value="all" className="m-0 p-0">
+                <ScrollArea className="h-[500px]">
+                  <div className="p-3">
+                    {[...getFilteredExecutions(agentExecutions), ...getFilteredExecutions(workflowExecutions), ...getFilteredExecutions(toolExecutions)]
+                      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
+                      .map(execution => {
+                        let type = 'unknown';
+                        if ('agentId' in execution) type = 'agent';
+                        else if ('workflowId' in execution) type = 'workflow';
+                        else if ('toolId' in execution) type = 'tool';
+                        
+                        return renderExecutionItem(execution, type);
+                      })}
+                    
+                    {getFilteredExecutions(agentExecutions).length === 0 && 
+                     getFilteredExecutions(workflowExecutions).length === 0 && 
+                     getFilteredExecutions(toolExecutions).length === 0 && (
+                      <div className="flex flex-col items-center justify-center h-32 text-center">
+                        <Activity className="h-8 w-8 text-gray-400 mb-2" />
+                        <p className="text-gray-500">No executions found</p>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </TabsContent>
+              
+              <TabsContent value="agent" className="m-0 p-0">
+                <ScrollArea className="h-[500px]">
+                  <div className="p-3">
+                    {getFilteredExecutions(agentExecutions).map(execution => 
+                      renderExecutionItem(execution, 'agent')
+                    )}
+                    
+                    {getFilteredExecutions(agentExecutions).length === 0 && (
+                      <div className="flex flex-col items-center justify-center h-32 text-center">
+                        <Bot className="h-8 w-8 text-gray-400 mb-2" />
+                        <p className="text-gray-500">No agent executions found</p>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </TabsContent>
+              
+              <TabsContent value="workflow" className="m-0 p-0">
+                <ScrollArea className="h-[500px]">
+                  <div className="p-3">
+                    {getFilteredExecutions(workflowExecutions).map(execution => 
+                      renderExecutionItem(execution, 'workflow')
+                    )}
+                    
+                    {getFilteredExecutions(workflowExecutions).length === 0 && (
+                      <div className="flex flex-col items-center justify-center h-32 text-center">
+                        <Layers className="h-8 w-8 text-gray-400 mb-2" />
+                        <p className="text-gray-500">No workflow executions found</p>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </TabsContent>
+              
+              <TabsContent value="tool" className="m-0 p-0">
+                <ScrollArea className="h-[500px]">
+                  <div className="p-3">
+                    {getFilteredExecutions(toolExecutions).map(execution => 
+                      renderExecutionItem(execution, 'tool')
+                    )}
+                    
+                    {getFilteredExecutions(toolExecutions).length === 0 && (
+                      <div className="flex flex-col items-center justify-center h-32 text-center">
+                        <Zap className="h-8 w-8 text-gray-400 mb-2" />
+                        <p className="text-gray-500">No tool executions found</p>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </TabsContent>
+            </Tabs>
+          </div>
+          
+          {showDetails && (
+            <div className="w-full md:w-2/3 border rounded-md overflow-hidden">
+              <ScrollArea className="h-[600px]">
+                {renderExecutionDetails()}
+              </ScrollArea>
+            </div>
+          )}
+        </div>
+      </CardContent>
+      <CardFooter className="border-t pt-4">
+        <div className="flex items-center justify-between w-full">
+          <div className="text-xs text-gray-500">
+            {isPolling ? (
+              <span className="flex items-center">
+                <span className="h-2 w-2 rounded-full bg-green-500 mr-1" />
+                Monitoring active
+              </span>
+            ) : (
+              <span className="flex items-center">
+                <span className="h-2 w-2 rounded-full bg-yellow-500 mr-1" />
+                Monitoring paused
+              </span>
             )}
           </div>
-        </CardContent>
-      </Card>
-    </div>
+          <div className="flex items-center space-x-2">
+            <span className="text-xs text-gray-500">
+              Refresh rate:
+            </span>
+            <select
+              className="text-xs border rounded px-1 py-0.5"
+              value={pollingInterval}
+              onChange={(e) => setPollingInterval(Number(e.target.value))}
+            >
+              <option value={1000}>1s</option>
+              <option value={5000}>5s</option>
+              <option value={10000}>10s</option>
+              <option value={30000}>30s</option>
+            </select>
+          </div>
+        </div>
+      </CardFooter>
+    </Card>
   );
 }
