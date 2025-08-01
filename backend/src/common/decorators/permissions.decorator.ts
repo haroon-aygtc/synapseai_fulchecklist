@@ -1,5 +1,4 @@
 import { SetMetadata } from '@nestjs/common';
-import { Permission } from '@prisma/client';
 
-export const RequirePermissions = (...permissions: Permission[]) => 
-  SetMetadata('permissions', permissions);
+export const Permissions = (...permissions: string[]) => SetMetadata('permissions', permissions);
+export const Public = () => SetMetadata('isPublic', true);

@@ -1,217 +1,293 @@
-import { 
-  AuthResponse, 
-  LoginCredentials, 
-  RegisterData, 
-  PasswordResetRequest, 
-  PasswordReset,
-  TwoFactorVerification,
-  User,
-  Organization,
-  SessionInfo
-} from './types';
+import axios, { AxiosInstance, AxiosResponse } from 'axios';
+
+export interface User {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: 'SUPER_ADMIN' | 'ORG_ADMIN' | 'DEVELOPER' | 'VIEWER';
+  organizationId: string;
+  isEmailVerified: boolean;
+  twoFactorEnabled: boolean;
+  lastLoginAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  settings: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthResponse {
+  user: User;
+  accessToken: string;
+  refreshToken: string;
+  organization: Organization;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+  twoFactorCode?: string;
+}
+
+export interface RegisterRequest {
+  firstName: string;
+  lastName: string;
+  email: string;
+  organizationName: string;
+  password: string;
+}
+
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export interface ResetPasswordRequest {
+  token: string;
+  password: string;
+}
+
+export interface VerifyEmailRequest {
+  token: string;
+}
+
+export interface Enable2FARequest {
+  password: string;
+}
+
+export interface Verify2FARequest {
+  token: string;
+}
+
+export interface RefreshTokenRequest {
+  refreshToken: string;
+}
 
 class AuthService {
-  private baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-  private tokenKey = 'synapseai_token';
-  private refreshTokenKey = 'synapseai_refresh_token';
+  private api: AxiosInstance;
+  private accessToken: string | null = null;
+  private refreshToken: string | null = null;
 
-  private async request<T>(
-    endpoint: string, 
-    options: RequestInit = {}
-  ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
-    const token = this.getToken();
-
-    const config: RequestInit = {
+  constructor() {
+    this.api = axios.create({
+      baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001',
+      timeout: 10000,
       headers: {
         'Content-Type': 'application/json',
-        ...(token && { Authorization: `Bearer ${token}` }),
-        ...options.headers,
       },
-      ...options,
-    };
+    });
 
-    try {
-      const response = await fetch(url, config);
-      
-      if (response.status === 401) {
-        const refreshed = await this.refreshToken();
-        if (refreshed) {
-          // Retry with new token
-          config.headers = {
-            ...config.headers,
-            Authorization: `Bearer ${this.getToken()}`,
-          };
-          const retryResponse = await fetch(url, config);
-          if (!retryResponse.ok) {
-            throw new Error(`HTTP error! status: ${retryResponse.status}`);
-          }
-          return retryResponse.json();
-        } else {
-          this.logout();
-          throw new Error('Authentication failed');
+    // Load tokens from localStorage on initialization
+    if (typeof window !== 'undefined') {
+      this.accessToken = localStorage.getItem('accessToken');
+      this.refreshToken = localStorage.getItem('refreshToken');
+    }
+
+    // Request interceptor to add auth token
+    this.api.interceptors.request.use(
+      (config) => {
+        if (this.accessToken) {
+          config.headers.Authorization = `Bearer ${this.accessToken}`;
         }
+        return config;
+      },
+      (error) => Promise.reject(error)
+    );
+
+    // Response interceptor to handle token refresh
+    this.api.interceptors.response.use(
+      (response) => response,
+      async (error) => {
+        const originalRequest = error.config;
+
+        if (error.response?.status === 401 && !originalRequest._retry) {
+          originalRequest._retry = true;
+
+          try {
+            if (this.refreshToken) {
+              const response = await this.refreshAccessToken();
+              this.setTokens(response.accessToken, this.refreshToken);
+              originalRequest.headers.Authorization = `Bearer ${response.accessToken}`;
+              return this.api(originalRequest);
+            }
+          } catch (refreshError) {
+            this.clearTokens();
+            window.location.href = '/auth/login';
+            return Promise.reject(refreshError);
+          }
+        }
+
+        return Promise.reject(error);
       }
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
-      }
-
-      return response.json();
-    } catch (error) {
-      console.error('API request failed:', error);
-      throw error;
-    }
-  }
-
-  async login(credentials: LoginCredentials): Promise<AuthResponse> {
-    const response = await this.request<AuthResponse>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(credentials),
-    });
-
-    this.setTokens(response.accessToken, response.refreshToken);
-    return response;
-  }
-
-  async register(data: RegisterData): Promise<AuthResponse> {
-    const response = await this.request<AuthResponse>('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-
-    this.setTokens(response.accessToken, response.refreshToken);
-    return response;
-  }
-
-  async logout(): Promise<void> {
-    try {
-      await this.request('/auth/logout', { method: 'POST' });
-    } catch (error) {
-      console.error('Logout request failed:', error);
-    } finally {
-      this.clearTokens();
-      window.location.href = '/auth/login';
-    }
-  }
-
-  async getCurrentUser(): Promise<{ user: User; organization: Organization }> {
-    return this.request('/auth/me');
-  }
-
-  async refreshToken(): Promise<boolean> {
-    const refreshToken = this.getRefreshToken();
-    if (!refreshToken) return false;
-
-    try {
-      const response = await this.request<AuthResponse>('/auth/refresh', {
-        method: 'POST',
-        body: JSON.stringify({ refreshToken }),
-      });
-
-      this.setTokens(response.accessToken, response.refreshToken);
-      return true;
-    } catch (error) {
-      console.error('Token refresh failed:', error);
-      this.clearTokens();
-      return false;
-    }
-  }
-
-  async requestPasswordReset(data: PasswordResetRequest): Promise<void> {
-    await this.request('/auth/forgot-password', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async resetPassword(data: PasswordReset): Promise<void> {
-    await this.request('/auth/reset-password', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async verifyTwoFactor(data: TwoFactorVerification): Promise<AuthResponse> {
-    const response = await this.request<AuthResponse>('/auth/verify-2fa', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-
-    this.setTokens(response.accessToken, response.refreshToken);
-    return response;
-  }
-
-  async enableTwoFactor(): Promise<{ qrCode: string; secret: string }> {
-    return this.request('/auth/enable-2fa', { method: 'POST' });
-  }
-
-  async disableTwoFactor(code: string): Promise<void> {
-    await this.request('/auth/disable-2fa', {
-      method: 'POST',
-      body: JSON.stringify({ code }),
-    });
-  }
-
-  async getSessions(): Promise<SessionInfo[]> {
-    return this.request('/auth/sessions');
-  }
-
-  async revokeSession(sessionId: string): Promise<void> {
-    await this.request(`/auth/sessions/${sessionId}`, { method: 'DELETE' });
-  }
-
-  async updateProfile(data: Partial<User>): Promise<User> {
-    return this.request('/auth/profile', {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
-    await this.request('/auth/change-password', {
-      method: 'POST',
-      body: JSON.stringify({ currentPassword, newPassword }),
-    });
-  }
-
-  async verifyEmail(token: string): Promise<void> {
-    await this.request('/auth/verify-email', {
-      method: 'POST',
-      body: JSON.stringify({ token }),
-    });
-  }
-
-  async resendVerificationEmail(): Promise<void> {
-    await this.request('/auth/resend-verification', { method: 'POST' });
-  }
-
-  // Token management
-  getToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem(this.tokenKey);
-  }
-
-  getRefreshToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem(this.refreshTokenKey);
+    );
   }
 
   private setTokens(accessToken: string, refreshToken: string): void {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem(this.tokenKey, accessToken);
-    localStorage.setItem(this.refreshTokenKey, refreshToken);
+    this.accessToken = accessToken;
+    this.refreshToken = refreshToken;
+
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('accessToken', accessToken);
+      localStorage.setItem('refreshToken', refreshToken);
+    }
   }
 
   private clearTokens(): void {
-    if (typeof window === 'undefined') return;
-    localStorage.removeItem(this.tokenKey);
-    localStorage.removeItem(this.refreshTokenKey);
+    this.accessToken = null;
+    this.refreshToken = null;
+
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
+      localStorage.removeItem('organization');
+    }
+  }
+
+  async register(data: RegisterRequest): Promise<{ message: string }> {
+    try {
+      const response: AxiosResponse<{ message: string }> = await this.api.post('/auth/register', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Registration failed');
+    }
+  }
+
+  async login(data: LoginRequest): Promise<AuthResponse> {
+    try {
+      const response: AxiosResponse<AuthResponse> = await this.api.post('/auth/login', data);
+      const { user, accessToken, refreshToken, organization } = response.data;
+
+      this.setTokens(accessToken, refreshToken);
+
+      // Store user and organization data
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('user', JSON.stringify(user));
+        localStorage.setItem('organization', JSON.stringify(organization));
+      }
+
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Login failed');
+    }
+  }
+
+  async logout(refreshToken?: string): Promise<void> {
+    try {
+      await this.api.post('/auth/logout', { refreshToken });
+    } catch (error) {
+      // Continue with logout even if API call fails
+      console.error('Logout API call failed:', error);
+    } finally {
+      this.clearTokens();
+    }
+  }
+
+  async refreshAccessToken(): Promise<{ accessToken: string }> {
+    if (!this.refreshToken) {
+      throw new Error('No refresh token available');
+    }
+
+    try {
+      const response: AxiosResponse<{ accessToken: string }> = await this.api.post('/auth/refresh', {
+        refreshToken: this.refreshToken,
+      });
+
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Token refresh failed');
+    }
+  }
+
+  async forgotPassword(data: ForgotPasswordRequest): Promise<{ message: string }> {
+    try {
+      const response: AxiosResponse<{ message: string }> = await this.api.post('/auth/forgot-password', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Password reset request failed');
+    }
+  }
+
+  async resetPassword(data: ResetPasswordRequest): Promise<{ message: string }> {
+    try {
+      const response: AxiosResponse<{ message: string }> = await this.api.post('/auth/reset-password', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Password reset failed');
+    }
+  }
+
+  async verifyEmail(data: VerifyEmailRequest): Promise<{ message: string }> {
+    try {
+      const response: AxiosResponse<{ message: string }> = await this.api.post('/auth/verify-email', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Email verification failed');
+    }
+  }
+
+  async enable2FA(data: Enable2FARequest): Promise<{ qrCode: string; backupCodes: string[] }> {
+    try {
+      const response: AxiosResponse<{ qrCode: string; backupCodes: string[] }> = await this.api.post('/auth/2fa/enable', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || '2FA setup failed');
+    }
+  }
+
+  async verify2FA(data: Verify2FARequest): Promise<{ message: string }> {
+    try {
+      const response: AxiosResponse<{ message: string }> = await this.api.post('/auth/2fa/verify', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || '2FA verification failed');
+    }
+  }
+
+  async disable2FA(password: string): Promise<{ message: string }> {
+    try {
+      const response: AxiosResponse<{ message: string }> = await this.api.post('/auth/2fa/disable', { password });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || '2FA disable failed');
+    }
+  }
+
+  async getProfile(): Promise<{ user: User; permissions: string[] }> {
+    try {
+      const response: AxiosResponse<{ user: User; permissions: string[] }> = await this.api.get('/auth/me');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to get profile');
+    }
   }
 
   isAuthenticated(): boolean {
-    return !!this.getToken();
+    return !!this.accessToken;
+  }
+
+  getAccessToken(): string | null {
+    return this.accessToken;
+  }
+
+  getUser(): User | null {
+    if (typeof window === 'undefined') return null;
+    
+    const userStr = localStorage.getItem('user');
+    return userStr ? JSON.parse(userStr) : null;
+  }
+
+  getOrganization(): Organization | null {
+    if (typeof window === 'undefined') return null;
+    
+    const orgStr = localStorage.getItem('organization');
+    return orgStr ? JSON.parse(orgStr) : null;
   }
 }
 
