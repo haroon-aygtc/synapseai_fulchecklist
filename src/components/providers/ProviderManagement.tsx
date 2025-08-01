@@ -1,670 +1,852 @@
-/**
- * Provider Management Component
- * 
- * Comprehensive interface for managing AI providers with smart routing,
- * configuration, testing, and monitoring capabilities.
- */
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Progress } from '@/components/ui/progress';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Separator } from '@/components/ui/separator';
 import { 
   Plus, 
   Settings, 
   Activity, 
-  Clock,
-  DollarSign,
+  DollarSign, 
+  Clock, 
+  CheckCircle, 
+  XCircle, 
+  AlertTriangle,
   Zap,
   Shield,
-  Globe,
-  TestTube,
   BarChart3,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-  Loader2,
-  Info,
-  Edit,
-  Trash2,
-  Copy,
   RefreshCw,
-  TrendingUp,
-  TrendingDown,
-  Wifi,
-  WifiOff,
-  Target,
-  Route,
-  Gauge
+  Trash2,
+  Edit,
+  TestTube,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 interface Provider {
   id: string;
   name: string;
-  type: 'OPENAI' | 'ANTHROPIC' | 'GOOGLE' | 'MISTRAL' | 'GROQ' | 'DEEPSEEK' | 'HUGGINGFACE' | 'OPENROUTER' | 'OLLAMA' | 'LOCALAI' | 'CUSTOM';
+  type: string;
   endpoint?: string;
-  apiKey?: string;
-  config: Record<string, any>;
   capabilities: string[];
   isActive: boolean;
   priority: number;
   rateLimit?: number;
   costPerToken?: number;
-  metadata: {
-    totalRequests: number;
-    totalErrors: number;
-    avgLatency: number;
-    successRate: number;
-    lastUsed?: Date;
-  };
-  routingRules: ProviderRoutingRule[];
-  usageMetrics: ProviderUsageMetric[];
+  healthStatus: 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY' | 'UNKNOWN';
+  avgResponseTime?: number;
+  successRate?: number;
+  totalRequests: number;
+  totalErrors: number;
+  lastUsedAt?: string;
+  lastHealthCheck?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-interface ProviderRoutingRule {
-  id: string;
-  condition: Record<string, any>;
-  priority: number;
-  fallback: boolean;
-  isActive: boolean;
-}
-
-interface ProviderUsageMetric {
-  id: string;
-  date: Date;
-  requests: number;
-  tokens: number;
-  cost: number;
-  errors: number;
+interface ProviderAnalytics {
+  totalRequests: number;
+  totalErrors: number;
+  errorRate: number;
+  totalCost: number;
   avgLatency: number;
-}
-
-interface ProviderManagementProps {
-  className?: string;
-  organizationId: string;
+  successRate: number;
+  dailyMetrics: Array<{
+    date: string;
+    requests: number;
+    errors: number;
+    cost: number;
+    avgLatency: number;
+  }>;
+  performanceScore: number;
+  healthScore: number;
+  costEfficiencyScore: number;
 }
 
 const PROVIDER_TYPES = [
-  { value: 'OPENAI', label: 'OpenAI', icon: '🤖', description: 'GPT-4, GPT-3.5, and other OpenAI models' },
-  { value: 'ANTHROPIC', label: 'Anthropic', icon: '🧠', description: 'Claude models for advanced reasoning' },
-  { value: 'GOOGLE', label: 'Google', icon: '🔍', description: 'Gemini and PaLM models' },
-  { value: 'MISTRAL', label: 'Mistral', icon: '🌪️', description: 'Open-source and commercial Mistral models' },
-  { value: 'GROQ', label: 'Groq', icon: '⚡', description: 'Ultra-fast inference with Groq chips' },
-  { value: 'DEEPSEEK', label: 'DeepSeek', icon: '🔬', description: 'Advanced coding and reasoning models' },
-  { value: 'HUGGINGFACE', label: 'Hugging Face', icon: '🤗', description: 'Open-source models via Hugging Face' },
-  { value: 'OPENROUTER', label: 'OpenRouter', icon: '🛣️', description: 'Access to multiple models via OpenRouter' },
-  { value: 'OLLAMA', label: 'Ollama', icon: '🦙', description: 'Local models via Ollama' },
-  { value: 'LOCALAI', label: 'LocalAI', icon: '🏠', description: 'Self-hosted AI models' },
-  { value: 'CUSTOM', label: 'Custom', icon: '⚙️', description: 'Custom API endpoints' }
+  { value: 'OPENAI', label: 'OpenAI', icon: '🤖' },
+  { value: 'ANTHROPIC', label: 'Anthropic (Claude)', icon: '🧠' },
+  { value: 'GOOGLE', label: 'Google (Gemini)', icon: '🔍' },
+  { value: 'MISTRAL', label: 'Mistral AI', icon: '🌪️' },
+  { value: 'GROQ', label: 'Groq', icon: '⚡' },
+  { value: 'DEEPSEEK', label: 'DeepSeek', icon: '🔬' },
+  { value: 'HUGGINGFACE', label: 'Hugging Face', icon: '🤗' },
+  { value: 'OPENROUTER', label: 'OpenRouter', icon: '🛣️' },
+  { value: 'OLLAMA', label: 'Ollama', icon: '🦙' },
+  { value: 'LOCALAI', label: 'LocalAI', icon: '🏠' },
+  { value: 'CUSTOM', label: 'Custom', icon: '⚙️' }
 ];
 
-const ROUTING_STRATEGIES = [
-  { value: 'cost', label: 'Cost Optimized', description: 'Route to the cheapest available provider' },
-  { value: 'latency', label: 'Latency Optimized', description: 'Route to the fastest provider' },
-  { value: 'quality', label: 'Quality Optimized', description: 'Route to the highest quality provider' },
-  { value: 'balanced', label: 'Balanced', description: 'Balance cost, latency, and quality' }
+const CAPABILITIES = [
+  'chat', 'completion', 'embedding', 'function_calling', 'vision', 'code_generation', 'translation'
 ];
 
-export default function ProviderManagement({ className = '', organizationId }: ProviderManagementProps) {
+export default function ProviderManagement() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isCreating, setIsCreating] = useState(false);
-  const [isTesting, setIsTesting] = useState(false);
-  const [testResults, setTestResults] = useState<Record<string, any>>({});
-  const [routingStrategy, setRoutingStrategy] = useState('balanced');
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [showEditDialog, setShowEditDialog] = useState(false);
-  const [showTestDialog, setShowTestDialog] = useState(false);
-  
-  const [newProvider, setNewProvider] = useState({
+  const [analytics, setAnalytics] = useState<ProviderAnalytics | null>(null);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isTestDialogOpen, setIsTestDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [testResults, setTestResults] = useState<any>(null);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [formData, setFormData] = useState({
     name: '',
-    type: 'OPENAI' as Provider['type'],
+    type: '',
     endpoint: '',
     apiKey: '',
-    config: {},
     capabilities: [] as string[],
-    priority: 0,
-    rateLimit: undefined as number | undefined,
-    costPerToken: undefined as number | undefined
+    priority: 50,
+    rateLimit: 1000,
+    costPerToken: 0.001,
+    config: '{}'
   });
 
-  // Load providers on mount
   useEffect(() => {
-    loadProviders();
-  }, [organizationId]);
+    fetchProviders();
+  }, []);
 
-  const loadProviders = async () => {
-    setIsLoading(true);
+  const fetchProviders = async () => {
     try {
-      const response = await fetch(`/api/providers?organizationId=${organizationId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setProviders(data);
-      }
+      setLoading(true);
+      const response = await fetch('/api/providers', {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await response.json();
+      setProviders(data.providers || []);
     } catch (error) {
-      console.error('Failed to load providers:', error);
+      console.error('Error fetching providers:', error);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
+    }
+  };
+
+  const fetchProviderAnalytics = async (providerId: string) => {
+    try {
+      const response = await fetch(`/api/providers/${providerId}/analytics`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await response.json();
+      setAnalytics(data);
+    } catch (error) {
+      console.error('Error fetching analytics:', error);
     }
   };
 
   const createProvider = async () => {
-    setIsCreating(true);
     try {
       const response = await fetch('/api/providers', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
         body: JSON.stringify({
-          ...newProvider,
-          organizationId
+          ...formData,
+          config: JSON.parse(formData.config || '{}')
         })
       });
 
       if (response.ok) {
-        const provider = await response.json();
-        setProviders(prev => [...prev, provider]);
-        setShowCreateDialog(false);
-        resetNewProvider();
+        setIsCreateDialogOpen(false);
+        resetForm();
+        fetchProviders();
       }
     } catch (error) {
-      console.error('Failed to create provider:', error);
-    } finally {
-      setIsCreating(false);
+      console.error('Error creating provider:', error);
     }
   };
 
-  const updateProvider = async (providerId: string, updates: Partial<Provider>) => {
+  const updateProvider = async () => {
+    if (!selectedProvider) return;
+
     try {
-      const response = await fetch(`/api/providers/${providerId}`, {
+      const response = await fetch(`/api/providers/${selectedProvider.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          ...formData,
+          config: JSON.parse(formData.config || '{}')
+        })
       });
 
       if (response.ok) {
-        const updatedProvider = await response.json();
-        setProviders(prev => prev.map(p => p.id === providerId ? updatedProvider : p));
-        if (selectedProvider?.id === providerId) {
-          setSelectedProvider(updatedProvider);
-        }
+        setIsEditDialogOpen(false);
+        resetForm();
+        fetchProviders();
       }
     } catch (error) {
-      console.error('Failed to update provider:', error);
+      console.error('Error updating provider:', error);
     }
   };
 
   const deleteProvider = async (providerId: string) => {
+    if (!confirm('Are you sure you want to delete this provider?')) return;
+
     try {
       const response = await fetch(`/api/providers/${providerId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
 
       if (response.ok) {
-        setProviders(prev => prev.filter(p => p.id !== providerId));
-        if (selectedProvider?.id === providerId) {
-          setSelectedProvider(null);
-        }
+        fetchProviders();
       }
     } catch (error) {
-      console.error('Failed to delete provider:', error);
+      console.error('Error deleting provider:', error);
     }
   };
 
-  const testProvider = async (provider: Provider) => {
-    setIsTesting(true);
+  const testProvider = async (providerId: string) => {
     try {
-      const response = await fetch(`/api/providers/${provider.id}/test`, {
+      setTestResults(null);
+      const response = await fetch(`/api/providers/${providerId}/test`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
         body: JSON.stringify({
-          messages: [
-            { role: 'user', content: 'Hello, this is a test message. Please respond briefly.' }
-          ]
+          message: 'Hello, this is a test message.',
+          maxTokens: 50
         })
       });
 
       const result = await response.json();
-      setTestResults(prev => ({ ...prev, [provider.id]: result }));
+      setTestResults(result);
     } catch (error) {
-      setTestResults(prev => ({ 
-        ...prev, 
-        [provider.id]: { 
-          success: false, 
-          error: error.message 
-        } 
-      }));
-    } finally {
-      setIsTesting(false);
+      console.error('Error testing provider:', error);
+      setTestResults({ success: false, error: error.message });
     }
   };
 
-  const resetNewProvider = () => {
-    setNewProvider({
+  const toggleProviderStatus = async (providerId: string, isActive: boolean) => {
+    try {
+      const response = await fetch(`/api/providers/${providerId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ isActive })
+      });
+
+      if (response.ok) {
+        fetchProviders();
+      }
+    } catch (error) {
+      console.error('Error toggling provider status:', error);
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
       name: '',
-      type: 'OPENAI',
+      type: '',
       endpoint: '',
       apiKey: '',
-      config: {},
       capabilities: [],
-      priority: 0,
-      rateLimit: undefined,
-      costPerToken: undefined
+      priority: 50,
+      rateLimit: 1000,
+      costPerToken: 0.001,
+      config: '{}'
     });
   };
 
-  const getProviderIcon = (type: Provider['type']) => {
-    const providerType = PROVIDER_TYPES.find(pt => pt.value === type);
-    return providerType?.icon || '⚙️';
+  const openEditDialog = (provider: Provider) => {
+    setSelectedProvider(provider);
+    setFormData({
+      name: provider.name,
+      type: provider.type,
+      endpoint: provider.endpoint || '',
+      apiKey: '', // Don't populate for security
+      capabilities: provider.capabilities,
+      priority: provider.priority,
+      rateLimit: provider.rateLimit || 1000,
+      costPerToken: provider.costPerToken || 0.001,
+      config: JSON.stringify(provider.metadata || {}, null, 2)
+    });
+    setIsEditDialogOpen(true);
   };
 
-  const getProviderStatusColor = (provider: Provider) => {
-    if (!provider.isActive) return 'text-gray-500';
-    if (provider.metadata.successRate > 95) return 'text-green-500';
-    if (provider.metadata.successRate > 80) return 'text-yellow-500';
-    return 'text-red-500';
+  const getHealthStatusColor = (status: string) => {
+    switch (status) {
+      case 'HEALTHY': return 'bg-green-500';
+      case 'DEGRADED': return 'bg-yellow-500';
+      case 'UNHEALTHY': return 'bg-red-500';
+      default: return 'bg-gray-500';
+    }
   };
 
-  const getLatencyColor = (latency: number) => {
-    if (latency < 500) return 'text-green-600';
-    if (latency < 1000) return 'text-yellow-600';
-    return 'text-red-600';
+  const getHealthStatusIcon = (status: string) => {
+    switch (status) {
+      case 'HEALTHY': return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case 'DEGRADED': return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+      case 'UNHEALTHY': return <XCircle className="h-4 w-4 text-red-500" />;
+      default: return <Activity className="h-4 w-4 text-gray-500" />;
+    }
   };
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
-      minimumFractionDigits: 4
+      minimumFractionDigits: 6
     }).format(amount);
   };
 
-  if (isLoading) {
+  const formatNumber = (num: number) => {
+    return new Intl.NumberFormat('en-US').format(num);
+  };
+
+  if (loading) {
     return (
-      <div className={`flex items-center justify-center h-64 ${className}`}>
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="h-8 w-8 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className={`bg-white ${className}`}>
-      <div className="space-y-6">
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex justify-between items-center">
           <div>
-            <h2 className="text-2xl font-bold">Provider Management</h2>
-            <p className="text-gray-600">Configure and monitor AI providers with smart routing</p>
+            <h1 className="text-3xl font-bold text-gray-900">Provider Management</h1>
+            <p className="text-gray-600 mt-1">Manage AI providers, routing, and analytics</p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={loadProviders}
-              variant="outline"
-              size="sm"
-              className="flex items-center gap-2"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </Button>
-            <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-              <DialogTrigger asChild>
-                <Button className="flex items-center gap-2">
-                  <Plus className="h-4 w-4" />
-                  Add Provider
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl">
-                <DialogHeader>
-                  <DialogTitle>Add New Provider</DialogTitle>
-                  <DialogDescription>
-                    Configure a new AI provider for your organization
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="provider-name">Provider Name</Label>
-                      <Input
-                        id="provider-name"
-                        value={newProvider.name}
-                        onChange={(e) => setNewProvider(prev => ({ ...prev, name: e.target.value }))}
-                        placeholder="My OpenAI Provider"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="provider-type">Provider Type</Label>
-                      <Select
-                        value={newProvider.type}
-                        onValueChange={(value) => setNewProvider(prev => ({ ...prev, type: value as Provider['type'] }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PROVIDER_TYPES.map(type => (
-                            <SelectItem key={type.value} value={type.value}>
-                              <div className="flex items-center gap-2">
-                                <span>{type.icon}</span>
-                                <span>{type.label}</span>
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="api-key">API Key</Label>
-                    <Input
-                      id="api-key"
-                      type="password"
-                      value={newProvider.apiKey}
-                      onChange={(e) => setNewProvider(prev => ({ ...prev, apiKey: e.target.value }))}
-                      placeholder="Enter API key"
-                    />
-                  </div>
-
-                  {(newProvider.type === 'OLLAMA' || newProvider.type === 'LOCALAI' || newProvider.type === 'CUSTOM') && (
-                    <div className="space-y-2">
-                      <Label htmlFor="endpoint">Endpoint URL</Label>
-                      <Input
-                        id="endpoint"
-                        value={newProvider.endpoint}
-                        onChange={(e) => setNewProvider(prev => ({ ...prev, endpoint: e.target.value }))}
-                        placeholder="https://api.example.com/v1"
-                      />
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="priority">Priority</Label>
-                      <Input
-                        id="priority"
-                        type="number"
-                        value={newProvider.priority}
-                        onChange={(e) => setNewProvider(prev => ({ ...prev, priority: Number(e.target.value) }))}
-                        min="0"
-                        max="100"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="rate-limit">Rate Limit (req/min)</Label>
-                      <Input
-                        id="rate-limit"
-                        type="number"
-                        value={newProvider.rateLimit || ''}
-                        onChange={(e) => setNewProvider(prev => ({ 
-                          ...prev, 
-                          rateLimit: e.target.value ? Number(e.target.value) : undefined 
-                        }))}
-                        placeholder="Optional"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="cost-per-token">Cost per Token</Label>
-                      <Input
-                        id="cost-per-token"
-                        type="number"
-                        step="0.0001"
-                        value={newProvider.costPerToken || ''}
-                        onChange={(e) => setNewProvider(prev => ({ 
-                          ...prev, 
-                          costPerToken: e.target.value ? Number(e.target.value) : undefined 
-                        }))}
-                        placeholder="0.0001"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setShowCreateDialog(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      onClick={createProvider}
-                      disabled={isCreating || !newProvider.name || !newProvider.apiKey}
-                    >
-                      {isCreating ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                          Creating...
-                        </>
-                      ) : (
-                        'Create Provider'
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
+          <Button onClick={() => setIsCreateDialogOpen(true)} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            Add Provider
+          </Button>
         </div>
 
-        {/* Smart Routing Configuration */}
+        {/* Overview Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Total Providers</p>
+                  <p className="text-2xl font-bold">{providers.length}</p>
+                </div>
+                <Settings className="h-8 w-8 text-blue-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Active Providers</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {providers.filter(p => p.isActive).length}
+                  </p>
+                </div>
+                <CheckCircle className="h-8 w-8 text-green-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Healthy Providers</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {providers.filter(p => p.healthStatus === 'HEALTHY').length}
+                  </p>
+                </div>
+                <Activity className="h-8 w-8 text-green-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Total Requests</p>
+                  <p className="text-2xl font-bold">
+                    {formatNumber(providers.reduce((sum, p) => sum + p.totalRequests, 0))}
+                  </p>
+                </div>
+                <BarChart3 className="h-8 w-8 text-blue-500" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Providers List */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Route className="h-5 w-5" />
-              Smart Routing Configuration
-            </CardTitle>
-            <CardDescription>
-              Configure how requests are routed across your providers
-            </CardDescription>
+            <CardTitle>Providers</CardTitle>
+            <CardDescription>Manage your AI provider configurations</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Default Routing Strategy</Label>
-                  <Select value={routingStrategy} onValueChange={setRoutingStrategy}>
+            <div className="space-y-4">
+              {providers.map((provider) => (
+                <div key={provider.id} className="border rounded-lg p-4 hover:bg-gray-50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-2xl">
+                          {PROVIDER_TYPES.find(t => t.value === provider.type)?.icon || '⚙️'}
+                        </span>
+                        <div>
+                          <h3 className="font-semibold">{provider.name}</h3>
+                          <p className="text-sm text-gray-600">{provider.type}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        {getHealthStatusIcon(provider.healthStatus)}
+                        <Badge variant={provider.isActive ? 'default' : 'secondary'}>
+                          {provider.isActive ? 'Active' : 'Inactive'}
+                        </Badge>
+                        <Badge variant="outline">Priority: {provider.priority}</Badge>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <div className="text-right text-sm">
+                        <p className="font-medium">{formatNumber(provider.totalRequests)} requests</p>
+                        <p className="text-gray-600">
+                          {provider.avgResponseTime ? `${provider.avgResponseTime.toFixed(0)}ms avg` : 'No data'}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center space-x-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedProvider(provider);
+                            fetchProviderAnalytics(provider.id);
+                          }}
+                        >
+                          <BarChart3 className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedProvider(provider);
+                            setIsTestDialogOpen(true);
+                          }}
+                        >
+                          <TestTube className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditDialog(provider)}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Switch
+                          checked={provider.isActive}
+                          onCheckedChange={(checked) => toggleProviderStatus(provider.id, checked)}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => deleteProvider(provider.id)}
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Provider Details */}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {provider.capabilities.map((capability) => (
+                      <Badge key={capability} variant="outline" className="text-xs">
+                        {capability}
+                      </Badge>
+                    ))}
+                  </div>
+
+                  {/* Metrics */}
+                  <div className="mt-3 grid grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <p className="text-gray-600">Success Rate</p>
+                      <p className="font-medium">
+                        {provider.successRate ? `${(provider.successRate * 100).toFixed(1)}%` : 'N/A'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-600">Cost/Token</p>
+                      <p className="font-medium">
+                        {provider.costPerToken ? formatCurrency(provider.costPerToken) : 'N/A'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-600">Rate Limit</p>
+                      <p className="font-medium">{provider.rateLimit || 'Unlimited'}/min</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-600">Last Used</p>
+                      <p className="font-medium">
+                        {provider.lastUsedAt 
+                          ? new Date(provider.lastUsedAt).toLocaleDateString()
+                          : 'Never'
+                        }
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Analytics Panel */}
+        {selectedProvider && analytics && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Analytics - {selectedProvider.name}</CardTitle>
+              <CardDescription>Performance metrics and insights</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="overview">
+                <TabsList>
+                  <TabsTrigger value="overview">Overview</TabsTrigger>
+                  <TabsTrigger value="performance">Performance</TabsTrigger>
+                  <TabsTrigger value="costs">Costs</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="overview" className="space-y-4">
+                  <div className="grid grid-cols-3 gap-4">
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-center">
+                          <p className="text-2xl font-bold text-blue-600">{analytics.performanceScore.toFixed(0)}</p>
+                          <p className="text-sm text-gray-600">Performance Score</p>
+                          <Progress value={analytics.performanceScore} className="mt-2" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-center">
+                          <p className="text-2xl font-bold text-green-600">{analytics.healthScore.toFixed(0)}</p>
+                          <p className="text-sm text-gray-600">Health Score</p>
+                          <Progress value={analytics.healthScore} className="mt-2" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-center">
+                          <p className="text-2xl font-bold text-purple-600">{analytics.costEfficiencyScore.toFixed(0)}</p>
+                          <p className="text-sm text-gray-600">Cost Efficiency</p>
+                          <Progress value={analytics.costEfficiencyScore} className="mt-2" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="performance" className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <Card>
+                      <CardContent className="p-4">
+                        <h4 className="font-semibold mb-2">Response Time</h4>
+                        <p className="text-2xl font-bold">{analytics.avgLatency.toFixed(0)}ms</p>
+                        <p className="text-sm text-gray-600">Average latency</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="p-4">
+                        <h4 className="font-semibold mb-2">Success Rate</h4>
+                        <p className="text-2xl font-bold text-green-600">
+                          {(analytics.successRate * 100).toFixed(1)}%
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          {analytics.totalRequests - analytics.totalErrors} / {analytics.totalRequests} requests
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="costs" className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <Card>
+                      <CardContent className="p-4">
+                        <h4 className="font-semibold mb-2">Total Cost</h4>
+                        <p className="text-2xl font-bold">{formatCurrency(analytics.totalCost)}</p>
+                        <p className="text-sm text-gray-600">Last 30 days</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="p-4">
+                        <h4 className="font-semibold mb-2">Cost per Request</h4>
+                        <p className="text-2xl font-bold">
+                          {formatCurrency(analytics.totalCost / analytics.totalRequests || 0)}
+                        </p>
+                        <p className="text-sm text-gray-600">Average cost</p>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Create Provider Dialog */}
+        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Add New Provider</DialogTitle>
+              <DialogDescription>Configure a new AI provider for your organization</DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="name">Provider Name</Label>
+                  <Input
+                    id="name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="My OpenAI Provider"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="type">Provider Type</Label>
+                  <Select value={formData.type} onValueChange={(value) => setFormData({ ...formData, type: value })}>
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue placeholder="Select provider type" />
                     </SelectTrigger>
                     <SelectContent>
-                      {ROUTING_STRATEGIES.map(strategy => (
-                        <SelectItem key={strategy.value} value={strategy.value}>
-                          <div>
-                            <div className="font-medium">{strategy.label}</div>
-                            <div className="text-sm text-gray-600">{strategy.description}</div>
-                          </div>
+                      {PROVIDER_TYPES.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.icon} {type.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-              
-              <div className="space-y-4">
-                <div className="text-sm">
-                  <div className="font-medium mb-2">Active Providers by Priority</div>
-                  <div className="space-y-1">
-                    {providers
-                      .filter(p => p.isActive)
-                      .sort((a, b) => b.priority - a.priority)
-                      .slice(0, 5)
-                      .map(provider => (
-                        <div key={provider.id} className="flex items-center justify-between text-xs">
-                          <span className="flex items-center gap-1">
-                            <span>{getProviderIcon(provider.type)}</span>
-                            {provider.name}
-                          </span>
-                          <Badge variant="outline" className="text-xs">
-                            Priority {provider.priority}
-                          </Badge>
-                        </div>
-                      ))}
-                  </div>
+
+              <div>
+                <Label htmlFor="endpoint">Endpoint (Optional)</Label>
+                <Input
+                  id="endpoint"
+                  value={formData.endpoint}
+                  onChange={(e) => setFormData({ ...formData, endpoint: e.target.value })}
+                  placeholder="https://api.openai.com/v1"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="apiKey">API Key</Label>
+                <div className="relative">
+                  <Input
+                    id="apiKey"
+                    type={showApiKey ? 'text' : 'password'}
+                    value={formData.apiKey}
+                    onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
+                    placeholder="sk-..."
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-2 top-1/2 -translate-y-1/2"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                  >
+                    {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
                 </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Providers Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {providers.map(provider => (
-            <Card key={provider.id} className="relative">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">{getProviderIcon(provider.type)}</span>
-                    <div>
-                      <CardTitle className="text-lg">{provider.name}</CardTitle>
-                      <CardDescription>{provider.type}</CardDescription>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {provider.isActive ? (
-                      <CheckCircle className={`h-4 w-4 ${getProviderStatusColor(provider)}`} />
-                    ) : (
-                      <XCircle className="h-4 w-4 text-gray-400" />
-                    )}
-                    <Switch
-                      checked={provider.isActive}
-                      onCheckedChange={(checked) => updateProvider(provider.id, { isActive: checked })}
-                      size="sm"
-                    />
-                  </div>
-                </div>
-              </CardHeader>
-              
-              <CardContent className="space-y-4">
-                {/* Metrics */}
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div className="text-center">
-                    <div className="font-semibold text-blue-600">
-                      {provider.metadata.totalRequests.toLocaleString()}
-                    </div>
-                    <div className="text-gray-600">Requests</div>
-                  </div>
-                  <div className="text-center">
-                    <div className={`font-semibold ${getLatencyColor(provider.metadata.avgLatency)}`}>
-                      {Math.round(provider.metadata.avgLatency)}ms
-                    </div>
-                    <div className="text-gray-600">Avg Latency</div>
-                  </div>
-                </div>
-
-                {/* Success Rate */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span>Success Rate</span>
-                    <span className={getProviderStatusColor(provider)}>
-                      {provider.metadata.successRate.toFixed(1)}%
-                    </span>
-                  </div>
-                  <Progress 
-                    value={provider.metadata.successRate} 
-                    className="h-2"
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <Label htmlFor="priority">Priority (0-100)</Label>
+                  <Input
+                    id="priority"
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={formData.priority}
+                    onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) })}
                   />
                 </div>
-
-                {/* Cost */}
-                {provider.costPerToken && (
-                  <div className="flex justify-between text-sm">
-                    <span>Cost per Token</span>
-                    <span className="font-medium">
-                      {formatCurrency(provider.costPerToken)}
-                    </span>
-                  </div>
-                )}
-
-                {/* Priority */}
-                <div className="flex justify-between text-sm">
-                  <span>Priority</span>
-                  <Badge variant="outline">
-                    {provider.priority}
-                  </Badge>
+                <div>
+                  <Label htmlFor="rateLimit">Rate Limit (per minute)</Label>
+                  <Input
+                    id="rateLimit"
+                    type="number"
+                    value={formData.rateLimit}
+                    onChange={(e) => setFormData({ ...formData, rateLimit: parseInt(e.target.value) })}
+                  />
                 </div>
-
-                {/* Actions */}
-                <div className="flex items-center gap-2 pt-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => testProvider(provider)}
-                    disabled={isTesting}
-                    className="flex-1"
-                  >
-                    {isTesting ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <TestTube className="h-3 w-3" />
-                    )}
-                    Test
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setSelectedProvider(provider);
-                      setShowEditDialog(true);
-                    }}
-                  >
-                    <Edit className="h-3 w-3" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => deleteProvider(provider.id)}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
+                <div>
+                  <Label htmlFor="costPerToken">Cost per Token</Label>
+                  <Input
+                    id="costPerToken"
+                    type="number"
+                    step="0.000001"
+                    value={formData.costPerToken}
+                    onChange={(e) => setFormData({ ...formData, costPerToken: parseFloat(e.target.value) })}
+                  />
                 </div>
+              </div>
 
-                {/* Test Results */}
-                {testResults[provider.id] && (
-                  <Alert className="mt-2">
-                    {testResults[provider.id].success ? (
-                      <CheckCircle className="h-4 w-4" />
+              <div>
+                <Label>Capabilities</Label>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {CAPABILITIES.map((capability) => (
+                    <Badge
+                      key={capability}
+                      variant={formData.capabilities.includes(capability) ? 'default' : 'outline'}
+                      className="cursor-pointer"
+                      onClick={() => {
+                        const newCapabilities = formData.capabilities.includes(capability)
+                          ? formData.capabilities.filter(c => c !== capability)
+                          : [...formData.capabilities, capability];
+                        setFormData({ ...formData, capabilities: newCapabilities });
+                      }}
+                    >
+                      {capability}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="config">Configuration (JSON)</Label>
+                <Textarea
+                  id="config"
+                  value={formData.config}
+                  onChange={(e) => setFormData({ ...formData, config: e.target.value })}
+                  placeholder="{}"
+                  rows={3}
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2">
+                <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={createProvider}>Create Provider</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Provider Dialog */}
+        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Edit Provider</DialogTitle>
+              <DialogDescription>Update provider configuration</DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              {/* Same form fields as create dialog */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="edit-name">Provider Name</Label>
+                  <Input
+                    id="edit-name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-type">Provider Type</Label>
+                  <Select value={formData.type} onValueChange={(value) => setFormData({ ...formData, type: value })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROVIDER_TYPES.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.icon} {type.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-2">
+                <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={updateProvider}>Update Provider</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Test Provider Dialog */}
+        <Dialog open={isTestDialogOpen} onOpenChange={setIsTestDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Test Provider</DialogTitle>
+              <DialogDescription>
+                Test the connection and functionality of {selectedProvider?.name}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              {testResults && (
+                <Alert className={testResults.success ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}>
+                  <AlertDescription>
+                    {testResults.success ? (
+                      <div>
+                        <p className="font-medium text-green-800">✅ Test successful!</p>
+                        <p className="text-sm text-green-700 mt-1">
+                          Response time: {testResults.duration}ms
+                        </p>
+                      </div>
                     ) : (
-                      <AlertTriangle className="h-4 w-4" />
+                      <div>
+                        <p className="font-medium text-red-800">❌ Test failed</p>
+                        <p className="text-sm text-red-700 mt-1">{testResults.error}</p>
+                      </div>
                     )}
-                    <AlertDescription className="text-xs">
-                      {testResults[provider.id].success 
-                        ? `Test successful (${testResults[provider.id].duration}ms)`
-                        : `Test failed: ${testResults[provider.id].error}`
-                      }
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                  </AlertDescription>
+                </Alert>
+              )}
 
-        {/* Empty State */}
-        {providers.length === 0 && (
-          <Card>
-            <CardContent className="text-center py-12">
-              <Globe className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No Providers Configured</h3>
-              <p className="text-gray-600 mb-4">
-                Add your first AI provider to start using SynapseAI
-              </p>
-              <Button onClick={() => setShowCreateDialog(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add Provider
-              </Button>
-            </CardContent>
-          </Card>
-        )}
+              <div className="flex justify-end space-x-2">
+                <Button variant="outline" onClick={() => setIsTestDialogOpen(false)}>
+                  Close
+                </Button>
+                <Button 
+                  onClick={() => selectedProvider && testProvider(selectedProvider.id)}
+                  disabled={!selectedProvider}
+                >
+                  <TestTube className="h-4 w-4 mr-2" />
+                  Run Test
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

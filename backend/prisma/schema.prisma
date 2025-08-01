@@ -399,7 +399,7 @@ model Provider {
   name           String
   type           ProviderType
   endpoint       String?
-  apiKey         String?
+  apiKey         String?       // Encrypted at rest
   config         Json          @default("{}")
   capabilities   String[]      @default([])
   isActive       Boolean       @default(true)
@@ -408,7 +408,7 @@ model Provider {
   costPerToken   Float?
   metadata       Json          @default("{}")
   createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  updatedAt      DateTime      @default(now())
 
   // Ownership
   userId         String
@@ -419,6 +419,21 @@ model Provider {
   // Routing & Analytics
   routingRules   ProviderRoutingRule[]
   usageMetrics   ProviderUsageMetric[]
+  healthChecks   ProviderHealthCheck[]
+  fallbackChains ProviderFallbackChain[]
+  
+  // Authentication & Security
+  encryptedCredentials Json?
+  lastHealthCheck      DateTime?
+  healthStatus         ProviderHealthStatus @default(UNKNOWN)
+  circuitBreakerStatus CircuitBreakerStatus @default(CLOSED)
+  
+  // Performance tracking
+  avgResponseTime      Float?   @default(0)
+  successRate          Float?   @default(0)
+  totalRequests        Int      @default(0)
+  totalErrors          Int      @default(0)
+  lastUsedAt           DateTime?
 
   @@map("providers")
 }
@@ -435,6 +450,19 @@ enum ProviderType {
   OLLAMA
   LOCALAI
   CUSTOM
+}
+
+enum ProviderHealthStatus {
+  HEALTHY
+  DEGRADED
+  UNHEALTHY
+  UNKNOWN
+}
+
+enum CircuitBreakerStatus {
+  CLOSED
+  OPEN
+  HALF_OPEN
 }
 
 model ProviderRoutingRule {
@@ -462,12 +490,58 @@ model ProviderUsageMetric {
   cost         Float    @default(0)
   errors       Int      @default(0)
   avgLatency   Float    @default(0)
+  successRate  Float    @default(0)
   metadata     Json     @default("{}")
 
   provider     Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
 
   @@unique([providerId, date])
   @@map("provider_usage_metrics")
+}
+
+model ProviderHealthCheck {
+  id           String   @id @default(cuid())
+  providerId   String
+  status       ProviderHealthStatus
+  responseTime Float?
+  errorMessage String?
+  checkedAt    DateTime @default(now())
+  metadata     Json     @default("{}")
+
+  provider     Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@map("provider_health_checks")
+}
+
+model ProviderFallbackChain {
+  id                String   @id @default(cuid())
+  primaryProviderId String
+  fallbackProviderId String
+  priority          Int      @default(0)
+  condition         Json     @default("{}")
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  primaryProvider   Provider @relation(fields: [primaryProviderId], references: [id], onDelete: Cascade)
+
+  @@unique([primaryProviderId, fallbackProviderId])
+  @@map("provider_fallback_chains")
+}
+
+model ProviderAuthentication {
+  id           String   @id @default(cuid())
+  providerId   String   @unique
+  authType     String   // 'api_key', 'oauth', 'basic', 'custom'
+  credentials  Json     // Encrypted credentials
+  expiresAt    DateTime?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  provider     Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@map("provider_authentications")
 }
 
 // Knowledge Base & RAG System
