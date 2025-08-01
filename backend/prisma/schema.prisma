@@ -44,6 +44,9 @@ model User {
   workflowExecutions WorkflowExecution[]
   auditLogs     AuditLog[]
 
+  abTests               ABTest[]
+  customRoutingRules    CustomRoutingRule[]
+
   @@map("users")
 }
 
@@ -81,6 +84,9 @@ model Organization {
 
   // Audit & Security
   auditLogs   AuditLog[]
+
+  abTests               ABTest[]
+  customRoutingRules    CustomRoutingRule[]
 
   @@map("organizations")
 }
@@ -435,6 +441,12 @@ model Provider {
   totalErrors          Int      @default(0)
   lastUsedAt           DateTime?
 
+  abTestVariants        ABTestVariant[]
+  monitoringAlerts      ProviderMonitoringAlert[]
+  realTimeMetrics       RealTimeMetrics[]
+  usageSessions         ProviderUsageSession[]
+  modelUsage            ProviderModelUsage[]
+
   @@map("providers")
 }
 
@@ -746,4 +758,241 @@ model Template {
   user        User @relation(fields: [userId], references: [id])
 
   @@map("templates")
+}
+
+// A/B Testing Models
+model ABTest {
+  id             String        @id @default(cuid())
+  name           String
+  description    String
+  providerIds    String[]      @default([])
+  trafficSplit   Float         @default(50.0)
+  splitType      ABTestSplitType @default(REQUESTS)
+  conditions     Json          @default("{}")
+  metrics        String[]      @default([])
+  status         ABTestStatus  @default(DRAFT)
+  startDate      DateTime?
+  endDate        DateTime?
+  duration       Int?          // hours
+  isActive       Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  
+  // Ownership
+  userId         String
+  organizationId String
+  user           User         @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  // Results and metrics
+  results        ABTestResult[]
+  variants       ABTestVariant[]
+  
+  @@map("ab_tests")
+}
+
+enum ABTestSplitType {
+  REQUESTS
+  USERS
+  TIME
+}
+
+enum ABTestStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model ABTestVariant {
+  id             String   @id @default(cuid())
+  testId         String
+  providerId     String
+  trafficPercentage Float
+  isControl      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  
+  test           ABTest   @relation(fields: [testId], references: [id], onDelete: Cascade)
+  provider       Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  
+  @@unique([testId, providerId])
+  @@map("ab_test_variants")
+}
+
+model ABTestResult {
+  id             String   @id @default(cuid())
+  testId         String
+  providerId     String
+  date           DateTime
+  requests       Int      @default(0)
+  successes      Int      @default(0)
+  errors         Int      @default(0)
+  totalLatency   Float    @default(0)
+  totalCost      Float    @default(0)
+  totalTokens    Int      @default(0)
+  metadata       Json     @default("{}")
+  
+  test           ABTest   @relation(fields: [testId], references: [id], onDelete: Cascade)
+  
+  @@unique([testId, providerId, date])
+  @@map("ab_test_results")
+}
+
+// Custom Routing Rules Models
+model CustomRoutingRule {
+  id             String   @id @default(cuid())
+  name           String
+  description    String
+  conditions     Json     @default("{}")
+  actions        Json     @default("{}")
+  priority       Int      @default(0)
+  isActive       Boolean  @default(true)
+  matchCount     Int      @default(0)
+  executionCount Int      @default(0)
+  successCount   Int      @default(0)
+  avgExecutionTime Float  @default(0)
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  // Ownership
+  userId         String
+  organizationId String
+  user           User         @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  // Analytics
+  executions     RoutingRuleExecution[]
+  
+  @@map("custom_routing_rules")
+}
+
+model RoutingRuleExecution {
+  id             String   @id @default(cuid())
+  ruleId         String
+  requestId      String?
+  matched        Boolean  @default(false)
+  executed       Boolean  @default(false)
+  success        Boolean  @default(false)
+  executionTime  Float    @default(0)
+  selectedProvider String?
+  requestContext Json     @default("{}")
+  result         Json     @default("{}")
+  error          String?
+  timestamp      DateTime @default(now())
+  
+  rule           CustomRoutingRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  
+  @@map("routing_rule_executions")
+}
+
+// Real-time Monitoring Models
+model ProviderMonitoringAlert {
+  id             String      @id @default(cuid())
+  providerId     String
+  type           AlertType
+  message        String
+  metadata       Json        @default("{}")
+  acknowledged   Boolean     @default(false)
+  acknowledgedBy String?
+  acknowledgedAt DateTime?
+  autoResolve    Boolean     @default(false)
+  autoResolveAfter Int?      // seconds
+  resolved       Boolean     @default(false)
+  resolvedAt     DateTime?
+  createdAt      DateTime    @default(now())
+  
+  provider       Provider    @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  
+  @@map("provider_monitoring_alerts")
+}
+
+enum AlertType {
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+model RealTimeMetrics {
+  id                    String   @id @default(cuid())
+  providerId            String
+  timestamp             DateTime @default(now())
+  activeRequests        Int      @default(0)
+  requestsPerMinute     Int      @default(0)
+  avgResponseTime       Float    @default(0)
+  errorRate             Float    @default(0)
+  successRate           Float    @default(0)
+  queueLength           Int      @default(0)
+  circuitBreakerStatus  String   @default("CLOSED")
+  rateLimitRemaining    Int      @default(0)
+  costPerMinute         Float    @default(0)
+  tokensPerMinute       Int      @default(0)
+  cpuUsage              Float?
+  memoryUsage           Float?
+  diskUsage             Float?
+  networkLatency        Float?
+  
+  provider              Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  
+  @@unique([providerId, timestamp])
+  @@map("real_time_metrics")
+}
+
+// Enhanced Analytics Models
+model ProviderUsageSession {
+  id             String   @id @default(cuid())
+  providerId     String
+  sessionId      String
+  userId         String?
+  organizationId String
+  startTime      DateTime @default(now())
+  endTime        DateTime?
+  totalRequests  Int      @default(0)
+  totalTokens    Int      @default(0)
+  totalCost      Float    @default(0)
+  avgLatency     Float    @default(0)
+  errorCount     Int      @default(0)
+  model          String?
+  userTier       String?
+  metadata       Json     @default("{}")
+  
+  provider       Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  
+  @@map("provider_usage_sessions")
+}
+
+model ProviderModelUsage {
+  id             String   @id @default(cuid())
+  providerId     String
+  model          String
+  date           DateTime
+  requests       Int      @default(0)
+  tokens         Int      @default(0)
+  cost           Float    @default(0)
+  errors         Int      @default(0)
+  avgLatency     Float    @default(0)
+  uniqueUsers    Int      @default(0)
+  
+  provider       Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  
+  @@unique([providerId, model, date])
+  @@map("provider_model_usage")
+}
+
+model RoutingDecision {
+  id                String   @id @default(cuid())
+  requestId         String   @unique
+  organizationId    String
+  selectedProvider  String
+  strategy          String
+  decisionTime      Float    @default(0)
+  fallbackUsed      Boolean  @default(false)
+  abTestId          String?
+  customRuleId      String?
+  requestContext    Json     @default("{}")
+  providerScores    Json     @default("{}")
+  timestamp         DateTime @default(now())
+  
+  @@map("routing_decisions")
 }

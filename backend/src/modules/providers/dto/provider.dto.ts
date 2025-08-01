@@ -379,3 +379,398 @@ export class ProviderAnalyticsDto {
   healthScore: number;
   costEfficiencyScore: number;
 }
+
+// A/B Testing DTOs
+export class CreateABTestDto {
+  @IsString()
+  name: string;
+
+  @IsString()
+  description: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  providerIds: string[];
+
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  trafficSplit: number;
+
+  @IsOptional()
+  @IsObject()
+  conditions?: Record<string, any>;
+
+  @IsOptional()
+  @IsString()
+  @IsEnum(['requests', 'users', 'time'])
+  splitType?: 'requests' | 'users' | 'time';
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  duration?: number; // in hours
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  metrics?: string[];
+}
+
+export class UpdateABTestDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  trafficSplit?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  conditions?: Record<string, any>;
+}
+
+export class ABTestResultsDto {
+  @IsOptional()
+  @Transform(({ value }) => new Date(value))
+  startDate?: Date;
+
+  @IsOptional()
+  @Transform(({ value }) => new Date(value))
+  endDate?: Date;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  metrics?: string[];
+
+  @IsOptional()
+  @IsEnum(['hourly', 'daily', 'weekly'])
+  granularity?: 'hourly' | 'daily' | 'weekly';
+}
+
+// Custom Routing Rules DTOs
+export class CreateCustomRoutingRuleDto {
+  @IsString()
+  name: string;
+
+  @IsString()
+  description: string;
+
+  @IsObject()
+  conditions: {
+    requestProperties?: {
+      model?: string[];
+      temperature?: { min?: number; max?: number };
+      maxTokens?: { min?: number; max?: number };
+      messageCount?: { min?: number; max?: number };
+      hasTools?: boolean;
+      hasImages?: boolean;
+      userTier?: string[];
+      organizationId?: string[];
+    };
+    timeConditions?: {
+      timeOfDay?: { start: string; end: string };
+      dayOfWeek?: number[];
+      timezone?: string;
+    };
+    loadConditions?: {
+      maxConcurrentRequests?: number;
+      avgResponseTime?: { max: number };
+      errorRate?: { max: number };
+    };
+    costConditions?: {
+      maxCostPerRequest?: number;
+      dailyBudgetRemaining?: { min: number };
+    };
+  };
+
+  @IsObject()
+  actions: {
+    providerSelection?: {
+      preferredProviders?: string[];
+      excludedProviders?: string[];
+      strategy?: 'cost' | 'latency' | 'quality' | 'balanced';
+      weights?: {
+        cost?: number;
+        latency?: number;
+        quality?: number;
+      };
+    };
+    fallbackBehavior?: {
+      enableFallback?: boolean;
+      maxRetries?: number;
+      fallbackProviders?: string[];
+    };
+    rateLimiting?: {
+      requestsPerMinute?: number;
+      burstLimit?: number;
+    };
+    caching?: {
+      enableCaching?: boolean;
+      ttl?: number;
+    };
+  };
+
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  priority: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, any>;
+}
+
+export class UpdateCustomRoutingRuleDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsObject()
+  conditions?: any;
+
+  @IsOptional()
+  @IsObject()
+  actions?: any;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  priority?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, any>;
+}
+
+export class TestCustomRoutingRuleDto {
+  @IsObject()
+  requestContext: {
+    model?: string;
+    temperature?: number;
+    maxTokens?: number;
+    messages?: Array<{ role: string; content: string }>;
+    tools?: any[];
+    userId?: string;
+    organizationId?: string;
+    userTier?: string;
+    timestamp?: Date;
+  };
+
+  @IsOptional()
+  @IsBoolean()
+  dryRun?: boolean;
+}
+
+// Real-time Monitoring DTOs
+export class MonitoringConfigDto {
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  providerIds?: string[];
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1000)
+  @Max(60000)
+  updateInterval?: number; // milliseconds
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  metrics?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  includeHistoricalData?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(24)
+  historicalHours?: number;
+}
+
+export class RealTimeMetricsDto {
+  providerId: string;
+  providerName: string;
+  providerType: string;
+  timestamp: Date;
+  status: 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY' | 'UNKNOWN';
+  metrics: {
+    activeRequests: number;
+    requestsPerMinute: number;
+    avgResponseTime: number;
+    errorRate: number;
+    successRate: number;
+    queueLength: number;
+    circuitBreakerStatus: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+    rateLimitRemaining: number;
+    costPerMinute: number;
+    tokensPerMinute: number;
+  };
+  alerts?: Array<{
+    type: 'WARNING' | 'ERROR' | 'CRITICAL';
+    message: string;
+    timestamp: Date;
+    acknowledged: boolean;
+  }>;
+}
+
+export class MonitoringAlertDto {
+  @IsString()
+  @IsEnum(['WARNING', 'ERROR', 'CRITICAL'])
+  type: 'WARNING' | 'ERROR' | 'CRITICAL';
+
+  @IsString()
+  message: string;
+
+  @IsString()
+  providerId: string;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, any>;
+
+  @IsOptional()
+  @IsBoolean()
+  autoResolve?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(60)
+  autoResolveAfter?: number; // seconds
+}
+
+export class AcknowledgeAlertDto {
+  @IsString()
+  alertId: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+// Enhanced Analytics DTOs
+export class AdvancedAnalyticsQueryDto extends ProviderAnalyticsQueryDto {
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  providerIds?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  includeABTests?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  includeRoutingRules?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @IsEnum(['provider', 'model', 'user', 'organization'])
+  groupBy?: 'provider' | 'model' | 'user' | 'organization';
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  filters?: string[];
+
+  @IsOptional()
+  @IsObject()
+  customFilters?: Record<string, any>;
+}
+
+export class ABTestAnalyticsDto {
+  testId: string;
+  testName: string;
+  status: 'RUNNING' | 'COMPLETED' | 'PAUSED' | 'CANCELLED';
+  startDate: Date;
+  endDate?: Date;
+  duration: number; // hours
+  totalRequests: number;
+  variants: Array<{
+    providerId: string;
+    providerName: string;
+    trafficPercentage: number;
+    requests: number;
+    successRate: number;
+    avgLatency: number;
+    totalCost: number;
+    errorRate: number;
+    userSatisfactionScore?: number;
+  }>;
+  statisticalSignificance: {
+    isSignificant: boolean;
+    confidenceLevel: number;
+    pValue: number;
+    winner?: string;
+  };
+  metrics: {
+    primaryMetric: string;
+    primaryMetricImprovement: number;
+    secondaryMetrics: Array<{
+      name: string;
+      improvement: number;
+      significance: number;
+    }>;
+  };
+  recommendations: Array<{
+    type: 'CONTINUE' | 'STOP' | 'EXTEND' | 'MODIFY';
+    reason: string;
+    confidence: number;
+  }>;
+}
+
+export class RoutingRuleAnalyticsDto {
+  ruleId: string;
+  ruleName: string;
+  isActive: boolean;
+  matchCount: number;
+  executionCount: number;
+  successRate: number;
+  avgExecutionTime: number;
+  impactMetrics: {
+    costSavings: number;
+    latencyImprovement: number;
+    errorReduction: number;
+    userSatisfactionImprovement: number;
+  };
+  topMatchingConditions: Array<{
+    condition: string;
+    matchCount: number;
+    successRate: number;
+  }>;
+  performanceByTimeOfDay: Array<{
+    hour: number;
+    matchCount: number;
+    successRate: number;
+    avgLatency: number;
+  }>;
+}
