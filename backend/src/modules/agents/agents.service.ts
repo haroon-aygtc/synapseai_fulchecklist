@@ -82,7 +82,25 @@ interface AgentCollaborationContext {
     to: string;
     message: string;
     timestamp: Date;
+    messageType: 'request' | 'response' | 'broadcast' | 'delegation';
+    metadata?: any;
   }>;
+  coordinationStrategy: 'sequential' | 'parallel' | 'hierarchical' | 'democratic';
+  leaderAgent?: string;
+  taskDistribution: Record<string, any>;
+  consensusThreshold?: number;
+}
+
+interface AgentCollaborationMessage {
+  id: string;
+  from: string;
+  to: string | 'all';
+  type: 'task_request' | 'task_response' | 'information_share' | 'consensus_vote' | 'coordination';
+  content: any;
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  requiresResponse: boolean;
+  deadline?: Date;
+  metadata: any;
 }
 
 @Injectable()
@@ -91,6 +109,8 @@ export class AgentsService {
   private activeSessions = new Map<string, AgentSession>();
   private agentMemories = new Map<string, AgentMemory>();
   private collaborationContexts = new Map<string, AgentCollaborationContext>();
+  private agentCapabilities = new Map<string, string[]>();
+  private collaborationStrategies = new Map<string, any>();
 
   constructor(
     private prisma: PrismaService,
@@ -99,6 +119,7 @@ export class AgentsService {
     private providers: ProvidersService
   ) {
     this.initializeMemoryManager();
+    this.initializeCollaborationSystem();
   }
 
   async createAgent(
@@ -678,37 +699,115 @@ export class AgentsService {
     return this.selectBestMultiProviderResponse(results, config);
   }
 
-  // Agent collaboration methods
+  // Enhanced Agent-to-Agent Collaboration System
   async initiateCollaboration(
     initiatorAgentId: string,
     collaboratorAgentIds: string[],
     organizationId: string,
-    context: any
+    context: {
+      task: string;
+      strategy: 'sequential' | 'parallel' | 'hierarchical' | 'democratic';
+      priority: 'low' | 'medium' | 'high' | 'urgent';
+      deadline?: Date;
+      sharedResources?: any;
+      constraints?: any;
+    }
   ): Promise<string> {
     const collaborationId = `collab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
+    // Validate all agents exist and are active
+    const allAgentIds = [initiatorAgentId, ...collaboratorAgentIds];
+    const agents = await this.prisma.agent.findMany({
+      where: {
+        id: { in: allAgentIds },
+        organizationId,
+        isActive: true
+      }
+    });
+
+    if (agents.length !== allAgentIds.length) {
+      throw new BadRequestException('One or more agents not found or inactive');
+    }
+
+    // Analyze agent capabilities for optimal task distribution
+    const agentCapabilities = await this.analyzeAgentCapabilities(agents);
+    const taskDistribution = await this.distributeCollaborationTasks(
+      context.task,
+      agentCapabilities,
+      context.strategy
+    );
+
     const collaborationContext: AgentCollaborationContext = {
       sessionId: collaborationId,
-      collaborators: [initiatorAgentId, ...collaboratorAgentIds],
-      sharedContext: context,
-      communicationLog: []
+      collaborators: allAgentIds,
+      sharedContext: {
+        originalTask: context.task,
+        priority: context.priority,
+        deadline: context.deadline,
+        sharedResources: context.sharedResources || {},
+        constraints: context.constraints || {},
+        startedAt: new Date(),
+        organizationId
+      },
+      communicationLog: [],
+      coordinationStrategy: context.strategy,
+      leaderAgent: context.strategy === 'hierarchical' ? initiatorAgentId : undefined,
+      taskDistribution,
+      consensusThreshold: context.strategy === 'democratic' ? Math.ceil(allAgentIds.length / 2) : undefined
     };
 
     this.collaborationContexts.set(collaborationId, collaborationContext);
 
-    // Notify all agents about the collaboration
-    for (const agentId of collaborationContext.collaborators) {
-      await this.apix.publishEvent('agent-events', {
-        type: 'COLLABORATION_INITIATED',
-        agentId,
-        organizationId,
-        data: {
-          collaborationId,
-          collaborators: collaborationContext.collaborators,
-          context
+    // Store collaboration in database for persistence
+    await this.prisma.agentSession.create({
+      data: {
+        sessionId: collaborationId,
+        agentId: initiatorAgentId,
+        userId: null,
+        status: SessionStatus.ACTIVE,
+        context: collaborationContext.sharedContext,
+        memory: { collaborationType: 'multi-agent', strategy: context.strategy },
+        messages: [],
+        metadata: {
+          type: 'collaboration',
+          collaborators: allAgentIds,
+          strategy: context.strategy,
+          taskDistribution
         }
-      });
+      }
+    });
+
+    // Initialize collaboration for each agent
+    for (const agentId of allAgentIds) {
+      await this.initializeAgentForCollaboration(agentId, collaborationId, collaborationContext);
     }
+
+    // Send initial coordination messages
+    await this.sendCollaborationCoordinationMessage(
+      collaborationId,
+      initiatorAgentId,
+      'all',
+      {
+        type: 'collaboration_started',
+        task: context.task,
+        strategy: context.strategy,
+        taskDistribution,
+        deadline: context.deadline
+      }
+    );
+
+    await this.apix.publishEvent('agent-events', {
+      type: 'COLLABORATION_INITIATED',
+      collaborationId,
+      initiatorAgentId,
+      collaborators: allAgentIds,
+      organizationId,
+      data: {
+        task: context.task,
+        strategy: context.strategy,
+        taskDistribution
+      }
+    });
 
     return collaborationId;
   }
@@ -716,8 +815,70 @@ export class AgentsService {
   async sendCollaborationMessage(
     collaborationId: string,
     fromAgentId: string,
-    toAgentId: string,
-    message: string,
+    toAgentId: string | 'all',
+    message: Omit<AgentCollaborationMessage, 'id' | 'from' | 'to'>
+  ): Promise<void> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) {
+      throw new NotFoundException('Collaboration not found');
+    }
+
+    if (!collaboration.collaborators.includes(fromAgentId)) {
+      throw new BadRequestException('Agent not part of collaboration');
+    }
+
+    if (toAgentId !== 'all' && !collaboration.collaborators.includes(toAgentId)) {
+      throw new BadRequestException('Target agent not part of collaboration');
+    }
+
+    const collaborationMessage: AgentCollaborationMessage = {
+      id: this.generateMessageId(),
+      from: fromAgentId,
+      to: toAgentId,
+      ...message
+    };
+
+    // Add to communication log
+    collaboration.communicationLog.push({
+      from: fromAgentId,
+      to: toAgentId,
+      message: JSON.stringify(collaborationMessage.content),
+      timestamp: new Date(),
+      messageType: this.mapMessageTypeToLogType(collaborationMessage.type),
+      metadata: collaborationMessage.metadata
+    });
+
+    // Process message based on type and strategy
+    await this.processCollaborationMessage(collaborationId, collaborationMessage);
+
+    // Broadcast to target agents
+    const targetAgents = toAgentId === 'all' 
+      ? collaboration.collaborators.filter(id => id !== fromAgentId)
+      : [toAgentId];
+
+    for (const targetAgentId of targetAgents) {
+      await this.deliverCollaborationMessage(
+        collaborationId,
+        targetAgentId,
+        collaborationMessage,
+        organizationId
+      );
+    }
+
+    await this.apix.publishEvent('agent-events', {
+      type: 'COLLABORATION_MESSAGE',
+      collaborationId,
+      fromAgentId,
+      toAgentId,
+      organizationId,
+      data: collaborationMessage
+    });
+  }
+
+  async processCollaborationResponse(
+    collaborationId: string,
+    agentId: string,
+    response: any,
     organizationId: string
   ): Promise<void> {
     const collaboration = this.collaborationContexts.get(collaborationId);
@@ -725,37 +886,586 @@ export class AgentsService {
       throw new NotFoundException('Collaboration not found');
     }
 
-    if (!collaboration.collaborators.includes(fromAgentId) || 
-        !collaboration.collaborators.includes(toAgentId)) {
-      throw new BadRequestException('Agent not part of collaboration');
+    // Update task progress
+    if (collaboration.taskDistribution[agentId]) {
+      collaboration.taskDistribution[agentId].status = 'completed';
+      collaboration.taskDistribution[agentId].result = response;
+      collaboration.taskDistribution[agentId].completedAt = new Date();
     }
 
-    collaboration.communicationLog.push({
-      from: fromAgentId,
-      to: toAgentId,
-      message,
-      timestamp: new Date()
-    });
+    // Check if collaboration is complete
+    const isComplete = await this.checkCollaborationCompletion(collaborationId);
+    
+    if (isComplete) {
+      await this.finalizeCollaboration(collaborationId, organizationId);
+    } else {
+      // Continue coordination based on strategy
+      await this.continueCollaborationCoordination(collaborationId, agentId, response);
+    }
 
     await this.apix.publishEvent('agent-events', {
-      type: 'COLLABORATION_MESSAGE',
-      agentId: toAgentId,
+      type: 'COLLABORATION_RESPONSE',
+      collaborationId,
+      agentId,
       organizationId,
       data: {
-        collaborationId,
-        fromAgentId,
-        message,
-        sharedContext: collaboration.sharedContext
+        response,
+        isComplete,
+        progress: this.calculateCollaborationProgress(collaborationId)
       }
     });
   }
 
-  // Memory management methods
+  // Collaboration Strategy Implementations
+  private async executeSequentialCollaboration(
+    collaborationId: string,
+    currentAgentId: string,
+    result: any
+  ): Promise<void> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    const currentIndex = collaboration.collaborators.indexOf(currentAgentId);
+    const nextIndex = currentIndex + 1;
+
+    if (nextIndex < collaboration.collaborators.length) {
+      const nextAgentId = collaboration.collaborators[nextIndex];
+      
+      await this.sendCollaborationMessage(
+        collaborationId,
+        currentAgentId,
+        nextAgentId,
+        {
+          type: 'task_request',
+          content: {
+            previousResult: result,
+            task: collaboration.taskDistribution[nextAgentId]?.task,
+            context: collaboration.sharedContext
+          },
+          priority: 'medium',
+          requiresResponse: true,
+          metadata: { sequentialStep: nextIndex }
+        },
+        collaboration.sharedContext.organizationId
+      );
+    }
+  }
+
+  private async executeParallelCollaboration(
+    collaborationId: string
+  ): Promise<void> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    // Send tasks to all agents simultaneously
+    const promises = collaboration.collaborators.map(async (agentId) => {
+      if (collaboration.taskDistribution[agentId]) {
+        return this.sendCollaborationMessage(
+          collaborationId,
+          collaboration.collaborators[0], // Use first agent as coordinator
+          agentId,
+          {
+            type: 'task_request',
+            content: {
+              task: collaboration.taskDistribution[agentId].task,
+              context: collaboration.sharedContext
+            },
+            priority: 'medium',
+            requiresResponse: true,
+            metadata: { parallelExecution: true }
+          },
+          collaboration.sharedContext.organizationId
+        );
+      }
+    });
+
+    await Promise.all(promises);
+  }
+
+  private async executeHierarchicalCollaboration(
+    collaborationId: string,
+    leaderAgentId: string
+  ): Promise<void> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    // Leader delegates tasks to subordinates
+    const subordinates = collaboration.collaborators.filter(id => id !== leaderAgentId);
+    
+    for (const subordinateId of subordinates) {
+      if (collaboration.taskDistribution[subordinateId]) {
+        await this.sendCollaborationMessage(
+          collaborationId,
+          leaderAgentId,
+          subordinateId,
+          {
+            type: 'task_request',
+            content: {
+              task: collaboration.taskDistribution[subordinateId].task,
+              context: collaboration.sharedContext,
+              authority: 'delegated',
+              reportBack: true
+            },
+            priority: 'high',
+            requiresResponse: true,
+            metadata: { hierarchicalDelegation: true, leader: leaderAgentId }
+          },
+          collaboration.sharedContext.organizationId
+        );
+      }
+    }
+  }
+
+  private async executeDemocraticCollaboration(
+    collaborationId: string,
+    proposal: any
+  ): Promise<void> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    // Initiate voting process
+    for (const agentId of collaboration.collaborators) {
+      await this.sendCollaborationMessage(
+        collaborationId,
+        'system',
+        agentId,
+        {
+          type: 'consensus_vote',
+          content: {
+            proposal,
+            votingDeadline: new Date(Date.now() + 300000), // 5 minutes
+            context: collaboration.sharedContext
+          },
+          priority: 'high',
+          requiresResponse: true,
+          metadata: { democraticVoting: true }
+        },
+        collaboration.sharedContext.organizationId
+      );
+    }
+  }
+
+  // Agent Capability Analysis
+  private async analyzeAgentCapabilities(agents: Agent[]): Promise<Record<string, any>> {
+    const capabilities: Record<string, any> = {};
+
+    for (const agent of agents) {
+      capabilities[agent.id] = {
+        type: agent.type,
+        tools: agent.tools,
+        skills: agent.skills,
+        model: agent.model,
+        specializations: await this.extractAgentSpecializations(agent),
+        performanceMetrics: await this.getAgentPerformanceMetrics(agent.id),
+        availability: await this.checkAgentAvailability(agent.id)
+      };
+    }
+
+    return capabilities;
+  }
+
+  private async extractAgentSpecializations(agent: Agent): Promise<string[]> {
+    const specializations: string[] = [];
+
+    // Extract from system prompt
+    if (agent.systemPrompt) {
+      const prompt = agent.systemPrompt.toLowerCase();
+      const keywords = [
+        'analysis', 'research', 'writing', 'coding', 'math', 'creative',
+        'customer service', 'data processing', 'translation', 'summarization'
+      ];
+      
+      specializations.push(...keywords.filter(keyword => prompt.includes(keyword)));
+    }
+
+    // Extract from tools
+    if (agent.tools.length > 0) {
+      const tools = await this.prisma.tool.findMany({
+        where: { id: { in: agent.tools } }
+      });
+      
+      specializations.push(...tools.map(tool => tool.category || 'general').filter(Boolean));
+    }
+
+    // Extract from skills
+    if (agent.skills && Array.isArray(agent.skills)) {
+      specializations.push(...(agent.skills as any[]).map(skill => skill.name));
+    }
+
+    return [...new Set(specializations)];
+  }
+
+  private async distributeCollaborationTasks(
+    mainTask: string,
+    agentCapabilities: Record<string, any>,
+    strategy: string
+  ): Promise<Record<string, any>> {
+    const distribution: Record<string, any> = {};
+
+    // Use AI to decompose task and assign to agents based on capabilities
+    const taskDecomposition = await this.decomposeTaskForCollaboration(
+      mainTask,
+      Object.keys(agentCapabilities),
+      agentCapabilities
+    );
+
+    for (const [agentId, capability] of Object.entries(agentCapabilities)) {
+      const assignedTask = taskDecomposition.find(task => 
+        this.matchTaskToCapability(task, capability)
+      );
+
+      if (assignedTask) {
+        distribution[agentId] = {
+          task: assignedTask.description,
+          priority: assignedTask.priority,
+          estimatedDuration: assignedTask.estimatedDuration,
+          dependencies: assignedTask.dependencies || [],
+          status: 'pending',
+          assignedAt: new Date()
+        };
+      }
+    }
+
+    return distribution;
+  }
+
+  private async decomposeTaskForCollaboration(
+    mainTask: string,
+    agentIds: string[],
+    capabilities: Record<string, any>
+  ): Promise<any[]> {
+    // Use the first available agent to help decompose the task
+    const coordinatorAgentId = agentIds[0];
+    
+    try {
+      const decompositionPrompt = `
+        Decompose this main task into subtasks that can be distributed among ${agentIds.length} AI agents:
+        
+        Main Task: ${mainTask}
+        
+        Available Agents and their capabilities:
+        ${Object.entries(capabilities).map(([id, cap]) => 
+          `Agent ${id}: ${cap.specializations.join(', ')}`
+        ).join('\n')}
+        
+        Please provide a JSON array of subtasks with the following structure:
+        [
+          {
+            "description": "subtask description",
+            "priority": "high|medium|low",
+            "estimatedDuration": "duration in minutes",
+            "requiredCapabilities": ["capability1", "capability2"],
+            "dependencies": ["other subtask descriptions"]
+          }
+        ]
+      `;
+
+      const result = await this.providers.executeWithSmartRouting(
+        capabilities[coordinatorAgentId].organizationId || 'default',
+        {
+          messages: [
+            { role: 'system', content: 'You are a task decomposition expert. Provide only valid JSON responses.' },
+            { role: 'user', content: decompositionPrompt }
+          ],
+          model: 'gpt-4',
+          temperature: 0.3,
+          maxTokens: 2048
+        }
+      );
+
+      return JSON.parse(result.content);
+    } catch (error) {
+      this.logger.error(`Task decomposition failed: ${error.message}`);
+      
+      // Fallback: simple task splitting
+      return agentIds.map((agentId, index) => ({
+        description: `Part ${index + 1} of: ${mainTask}`,
+        priority: 'medium',
+        estimatedDuration: '30',
+        requiredCapabilities: capabilities[agentId].specializations.slice(0, 2),
+        dependencies: []
+      }));
+    }
+  }
+
+  private matchTaskToCapability(task: any, capability: any): boolean {
+    if (!task.requiredCapabilities || task.requiredCapabilities.length === 0) {
+      return true;
+    }
+
+    return task.requiredCapabilities.some((required: string) =>
+      capability.specializations.some((spec: string) =>
+        spec.toLowerCase().includes(required.toLowerCase()) ||
+        required.toLowerCase().includes(spec.toLowerCase())
+      )
+    );
+  }
+
+  // Collaboration Management
+  private async initializeAgentForCollaboration(
+    agentId: string,
+    collaborationId: string,
+    context: AgentCollaborationContext
+  ): Promise<void> {
+    // Update agent memory with collaboration context
+    const memory = await this.getAgentMemory(agentId, collaborationId);
+    
+    memory.workingMemory.collaboration = {
+      id: collaborationId,
+      role: context.leaderAgent === agentId ? 'leader' : 'collaborator',
+      strategy: context.coordinationStrategy,
+      collaborators: context.collaborators.filter(id => id !== agentId),
+      sharedContext: context.sharedContext,
+      assignedTask: context.taskDistribution[agentId]
+    };
+
+    this.agentMemories.set(`${agentId}:${collaborationId}`, memory);
+
+    // Notify agent about collaboration
+    await this.apix.publishEvent('agent-events', {
+      type: 'COLLABORATION_INITIALIZED',
+      agentId,
+      collaborationId,
+      data: {
+        role: memory.workingMemory.collaboration.role,
+        task: context.taskDistribution[agentId],
+        collaborators: context.collaborators.length - 1
+      }
+    });
+  }
+
+  private async processCollaborationMessage(
+    collaborationId: string,
+    message: AgentCollaborationMessage
+  ): Promise<void> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    switch (message.type) {
+      case 'task_request':
+        await this.handleTaskRequest(collaborationId, message);
+        break;
+      case 'task_response':
+        await this.handleTaskResponse(collaborationId, message);
+        break;
+      case 'information_share':
+        await this.handleInformationShare(collaborationId, message);
+        break;
+      case 'consensus_vote':
+        await this.handleConsensusVote(collaborationId, message);
+        break;
+      case 'coordination':
+        await this.handleCoordinationMessage(collaborationId, message);
+        break;
+    }
+  }
+
+  private async deliverCollaborationMessage(
+    collaborationId: string,
+    targetAgentId: string,
+    message: AgentCollaborationMessage,
+    organizationId: string
+  ): Promise<void> {
+    // Create a session for the target agent if needed
+    let session = await this.prisma.agentSession.findFirst({
+      where: {
+        agentId: targetAgentId,
+        sessionId: `${collaborationId}_${targetAgentId}`,
+        status: SessionStatus.ACTIVE
+      }
+    });
+
+    if (!session) {
+      session = await this.createSession(
+        targetAgentId,
+        organizationId,
+        'system',
+        {
+          context: { collaborationId, messageDelivery: true },
+          metadata: { type: 'collaboration_message_delivery' }
+        }
+      );
+    }
+
+    // Process the message as if it came from the user
+    await this.sendMessage(
+      session.sessionId,
+      organizationId,
+      {
+        message: JSON.stringify({
+          collaborationMessage: message,
+          instruction: 'Process this collaboration message and respond appropriately.'
+        }),
+        role: 'user',
+        metadata: { 
+          collaborationId,
+          messageType: message.type,
+          fromAgent: message.from
+        }
+      }
+    );
+  }
+
+  // Collaboration Completion and Finalization
+  private async checkCollaborationCompletion(collaborationId: string): Promise<boolean> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return false;
+
+    const tasks = Object.values(collaboration.taskDistribution);
+    const completedTasks = tasks.filter((task: any) => task.status === 'completed');
+
+    return completedTasks.length === tasks.length;
+  }
+
+  private async finalizeCollaboration(
+    collaborationId: string,
+    organizationId: string
+  ): Promise<void> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    // Aggregate results
+    const results = Object.entries(collaboration.taskDistribution)
+      .filter(([_, task]: [string, any]) => task.status === 'completed')
+      .map(([agentId, task]: [string, any]) => ({
+        agentId,
+        task: task.task,
+        result: task.result,
+        completedAt: task.completedAt
+      }));
+
+    // Generate final collaboration result
+    const finalResult = await this.synthesizeCollaborationResults(
+      collaboration.sharedContext.originalTask,
+      results,
+      collaboration.coordinationStrategy
+    );
+
+    // Update session with final result
+    await this.prisma.agentSession.updateMany({
+      where: { sessionId: collaborationId },
+      data: {
+        status: SessionStatus.INACTIVE,
+        endedAt: new Date(),
+        messages: {
+          push: {
+            role: 'system',
+            content: `Collaboration completed. Final result: ${JSON.stringify(finalResult)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { type: 'collaboration_completion' }
+          }
+        }
+      }
+    });
+
+    // Clean up collaboration context
+    this.collaborationContexts.delete(collaborationId);
+
+    await this.apix.publishEvent('agent-events', {
+      type: 'COLLABORATION_COMPLETED',
+      collaborationId,
+      organizationId,
+      data: {
+        finalResult,
+        participantResults: results,
+        duration: Date.now() - new Date(collaboration.sharedContext.startedAt).getTime(),
+        strategy: collaboration.coordinationStrategy
+      }
+    });
+  }
+
+  private async synthesizeCollaborationResults(
+    originalTask: string,
+    results: any[],
+    strategy: string
+  ): Promise<any> {
+    // Use AI to synthesize the final result from all agent contributions
+    const synthesisPrompt = `
+      Original Task: ${originalTask}
+      Collaboration Strategy: ${strategy}
+      
+      Agent Results:
+      ${results.map((r, i) => `
+        Agent ${i + 1} Result:
+        Task: ${r.task}
+        Result: ${JSON.stringify(r.result)}
+      `).join('\n')}
+      
+      Please synthesize these results into a comprehensive final answer that addresses the original task.
+      Provide a JSON response with:
+      {
+        "finalAnswer": "comprehensive answer",
+        "confidence": "high|medium|low",
+        "contributingFactors": ["factor1", "factor2"],
+        "recommendations": ["rec1", "rec2"]
+      }
+    `;
+
+    try {
+      const synthesis = await this.providers.executeWithSmartRouting(
+        'default', // Use default organization for synthesis
+        {
+          messages: [
+            { role: 'system', content: 'You are an expert at synthesizing multiple AI agent results into coherent final answers.' },
+            { role: 'user', content: synthesisPrompt }
+          ],
+          model: 'gpt-4',
+          temperature: 0.2,
+          maxTokens: 2048
+        }
+      );
+
+      return JSON.parse(synthesis.content);
+    } catch (error) {
+      this.logger.error(`Result synthesis failed: ${error.message}`);
+      
+      // Fallback: simple aggregation
+      return {
+        finalAnswer: results.map(r => r.result).join('\n\n'),
+        confidence: 'medium',
+        contributingFactors: results.map(r => r.task),
+        recommendations: ['Review individual agent results for more details']
+      };
+    }
+  }
+
+  // Helper methods
   private initializeMemoryManager(): void {
     // Set up memory pruning interval
     setInterval(() => {
       this.pruneMemories();
     }, 60000); // Every minute
+  }
+
+  private initializeCollaborationSystem(): void {
+    // Set up collaboration cleanup interval
+    setInterval(() => {
+      this.cleanupStaleCollaborations();
+    }, 300000); // Every 5 minutes
+  }
+
+  private async cleanupStaleCollaborations(): Promise<void> {
+    const now = Date.now();
+    const staleThreshold = 24 * 60 * 60 * 1000; // 24 hours
+
+    for (const [collaborationId, context] of this.collaborationContexts.entries()) {
+      const startTime = new Date(context.sharedContext.startedAt).getTime();
+      
+      if (now - startTime > staleThreshold) {
+        this.logger.warn(`Cleaning up stale collaboration: ${collaborationId}`);
+        
+        // Mark as timed out
+        await this.prisma.agentSession.updateMany({
+          where: { sessionId: collaborationId },
+          data: { 
+            status: SessionStatus.ERROR,
+            endedAt: new Date()
+          }
+        });
+
+        this.collaborationContexts.delete(collaborationId);
+      }
+    }
   }
 
   private initializeAgentMemory(agentId: string): void {
@@ -937,7 +1647,6 @@ export class AgentsService {
     }
   }
 
-  // Helper methods
   private async prepareAgentContext(
     agent: Agent,
     session: AgentSession,
@@ -1360,5 +2069,195 @@ export class AgentsService {
       totalMessages: metadata?.totalMessages || 0,
       lastUsed: metadata?.lastUsed
     };
+  }
+
+  private handleTaskRequest(collaborationId: string, message: AgentCollaborationMessage): Promise<void> {
+    // Agent received a task request - process it
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    // Update task status
+    if (collaboration.taskDistribution[message.to as string]) {
+      collaboration.taskDistribution[message.to as string].status = 'in_progress';
+      collaboration.taskDistribution[message.to as string].startedAt = new Date();
+    }
+  }
+
+  private handleTaskResponse(collaborationId: string, message: AgentCollaborationMessage): Promise<void> {
+    // Agent completed a task - update progress
+    return this.processCollaborationResponse(
+      collaborationId,
+      message.from,
+      message.content,
+      'default' // This should be passed from context
+    );
+  }
+
+  private handleInformationShare(collaborationId: string, message: AgentCollaborationMessage): Promise<void> {
+    // Agent shared information - update shared context
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    if (!collaboration.sharedContext.sharedInformation) {
+      collaboration.sharedContext.sharedInformation = [];
+    }
+
+    collaboration.sharedContext.sharedInformation.push({
+      from: message.from,
+      information: message.content,
+      timestamp: new Date()
+    });
+  }
+
+  private handleConsensusVote(collaborationId: string, message: AgentCollaborationMessage): Promise<void> {
+    // Handle democratic voting
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    if (!collaboration.sharedContext.votes) {
+      collaboration.sharedContext.votes = {};
+    }
+
+    collaboration.sharedContext.votes[message.from] = message.content;
+
+    // Check if consensus reached
+    const voteCount = Object.keys(collaboration.sharedContext.votes).length;
+    if (voteCount >= (collaboration.consensusThreshold || collaboration.collaborators.length)) {
+      return this.processConsensusResult(collaborationId);
+    }
+  }
+
+  private handleCoordinationMessage(collaborationId: string, message: AgentCollaborationMessage): Promise<void> {
+    // Handle coordination messages between agents
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    // Process based on coordination strategy
+    switch (collaboration.coordinationStrategy) {
+      case 'sequential':
+        return this.executeSequentialCollaboration(collaborationId, message.from, message.content);
+      case 'hierarchical':
+        if (message.from === collaboration.leaderAgent) {
+          return this.executeHierarchicalCollaboration(collaborationId, message.from);
+        }
+        break;
+    }
+  }
+
+  private processConsensusResult(collaborationId: string): Promise<void> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    const votes = collaboration.sharedContext.votes;
+    const voteValues = Object.values(votes);
+    
+    // Simple majority consensus
+    const consensusResult = this.calculateConsensus(voteValues);
+    
+    // Broadcast consensus result
+    for (const agentId of collaboration.collaborators) {
+      return this.sendCollaborationCoordinationMessage(
+        collaborationId,
+        'system',
+        agentId,
+        {
+          type: 'consensus_reached',
+          result: consensusResult,
+          votes: votes
+        }
+      );
+    }
+  }
+
+  private calculateConsensus(votes: any[]): any {
+    // Simple implementation - can be enhanced with more sophisticated consensus algorithms
+    const voteMap = new Map();
+    
+    for (const vote of votes) {
+      const voteStr = JSON.stringify(vote);
+      voteMap.set(voteStr, (voteMap.get(voteStr) || 0) + 1);
+    }
+
+    let maxVotes = 0;
+    let consensusVote = null;
+
+    for (const [vote, count] of voteMap.entries()) {
+      if (count > maxVotes) {
+        maxVotes = count;
+        consensusVote = JSON.parse(vote);
+      }
+    }
+
+    return consensusVote;
+  }
+
+  private sendCollaborationCoordinationMessage(
+    collaborationId: string,
+    from: string,
+    to: string,
+    content: any
+  ): Promise<void> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    collaboration.communicationLog.push({
+      from,
+      to,
+      message: JSON.stringify(content),
+      timestamp: new Date(),
+      messageType: 'delegation',
+      metadata: { systemMessage: true }
+    });
+
+    return this.apix.publishEvent('agent-events', {
+      type: 'COLLABORATION_COORDINATION',
+      collaborationId,
+      from,
+      to,
+      data: content
+    });
+  }
+
+  private generateMessageId(): string {
+    return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  private mapMessageTypeToLogType(type: string): 'request' | 'response' | 'broadcast' | 'delegation' {
+    switch (type) {
+      case 'task_request': return 'request';
+      case 'task_response': return 'response';
+      case 'information_share': return 'broadcast';
+      case 'consensus_vote': return 'broadcast';
+      case 'coordination': return 'delegation';
+      default: return 'broadcast';
+    }
+  }
+
+  private calculateCollaborationProgress(collaborationId: string): number {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return 0;
+
+    const tasks = Object.values(collaboration.taskDistribution);
+    const completedTasks = tasks.filter((task: any) => task.status === 'completed');
+
+    return tasks.length > 0 ? (completedTasks.length / tasks.length) * 100 : 0;
+  }
+
+  private continueCollaborationCoordination(collaborationId: string, agentId: string, response: any): Promise<void> {
+    const collaboration = this.collaborationContexts.get(collaborationId);
+    if (!collaboration) return;
+
+    // Continue coordination based on strategy
+    switch (collaboration.coordinationStrategy) {
+      case 'sequential':
+        return this.executeSequentialCollaboration(collaborationId, agentId, response);
+      case 'parallel':
+        return this.executeParallelCollaboration(collaborationId);
+      case 'hierarchical':
+        if (agentId === collaboration.leaderAgent) {
+          return this.executeHierarchicalCollaboration(collaborationId, agentId);
+        }
+        break;
+    }
   }
 }
