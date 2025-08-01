@@ -1,226 +1,390 @@
-import { Tool, ToolConfiguration, ToolUsage } from '../types';
+import { Tool, ToolType, ToolExecution, ToolUsage } from '../types';
+import { z } from 'zod';
 
-class ToolService {
-  private baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+export interface ToolExecutionContext {
+  sessionId?: string;
+  userId?: string;
+  organizationId: string;
+  metadata?: Record<string, any>;
+}
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const token = localStorage.getItem('synapseai_token');
-    const url = `${this.baseUrl}${endpoint}`;
+export class ToolService {
+  private baseUrl = '/api/tools';
 
-    const config: RequestInit = {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token && { Authorization: `Bearer ${token}` }),
-        ...options.headers,
-      },
-      ...options,
-    };
-
-    const response = await fetch(url, config);
-
+  // Tool CRUD Operations
+  async createTool(config: Partial<Tool>): Promise<Tool> {
+    const response = await fetch(`${this.baseUrl}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    });
+    
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      throw new Error(`Failed to create tool: ${response.statusText}`);
     }
-
+    
     return response.json();
-  }
-
-  async getTools(params?: {
-    page?: number;
-    limit?: number;
-    search?: string;
-    type?: string;
-    status?: string;
-    tags?: string[];
-  }): Promise<{ tools: Tool[]; total: number; page: number; limit: number }> {
-    const searchParams = new URLSearchParams();
-    if (params?.page) searchParams.set('page', params.page.toString());
-    if (params?.limit) searchParams.set('limit', params.limit.toString());
-    if (params?.search) searchParams.set('search', params.search);
-    if (params?.type) searchParams.set('type', params.type);
-    if (params?.status) searchParams.set('status', params.status);
-    if (params?.tags?.length) searchParams.set('tags', params.tags.join(','));
-
-    return this.request(`/tools?${searchParams.toString()}`);
   }
 
   async getTool(id: string): Promise<Tool> {
-    return this.request(`/tools/${id}`);
-  }
-
-  async createTool(data: Partial<Tool>): Promise<Tool> {
-    return this.request('/tools', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async updateTool(id: string, data: Partial<Tool>): Promise<Tool> {
-    return this.request(`/tools/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async deleteTool(id: string): Promise<void> {
-    await this.request(`/tools/${id}`, { method: 'DELETE' });
-  }
-
-  async cloneTool(id: string, name?: string): Promise<Tool> {
-    return this.request(`/tools/${id}/clone`, {
-      method: 'POST',
-      body: JSON.stringify({ name }),
-    });
-  }
-
-  async testTool(id: string, input: any): Promise<{
-    output: any;
-    executionTime: number;
-    success: boolean;
-    error?: string;
-  }> {
-    return this.request(`/tools/${id}/test`, {
-      method: 'POST',
-      body: JSON.stringify({ input }),
-    });
-  }
-
-  async getToolUsage(id: string, timeRange?: string): Promise<ToolUsage> {
-    const searchParams = new URLSearchParams();
-    if (timeRange) searchParams.set('timeRange', timeRange);
-
-    return this.request(`/tools/${id}/usage?${searchParams.toString()}`);
-  }
-
-  async updateToolConfiguration(
-    id: string, 
-    configuration: Partial<ToolConfiguration>
-  ): Promise<Tool> {
-    return this.request(`/tools/${id}/configuration`, {
-      method: 'PATCH',
-      body: JSON.stringify(configuration),
-    });
-  }
-
-  async getToolTemplates(category?: string): Promise<Tool[]> {
-    const searchParams = new URLSearchParams();
-    if (category) searchParams.set('category', category);
-
-    return this.request(`/tools/templates?${searchParams.toString()}`);
-  }
-
-  async createFromTemplate(templateId: string, data: {
-    name: string;
-    description?: string;
-    configuration?: Partial<ToolConfiguration>;
-  }): Promise<Tool> {
-    return this.request(`/tools/templates/${templateId}/create`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async validateToolSchema(schema: any): Promise<{
-    valid: boolean;
-    errors: string[];
-  }> {
-    return this.request('/tools/validate-schema', {
-      method: 'POST',
-      body: JSON.stringify({ schema }),
-    });
-  }
-
-  async importFromOpenAPI(spec: any, name: string): Promise<Tool[]> {
-    return this.request('/tools/import/openapi', {
-      method: 'POST',
-      body: JSON.stringify({ spec, name }),
-    });
-  }
-
-  async importFromPostman(collection: any, name: string): Promise<Tool[]> {
-    return this.request('/tools/import/postman', {
-      method: 'POST',
-      body: JSON.stringify({ collection, name }),
-    });
-  }
-
-  async exportTool(id: string): Promise<Blob> {
-    const response = await fetch(`${this.baseUrl}/tools/${id}/export`, {
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('synapseai_token')}`,
-      },
-    });
-
+    const response = await fetch(`${this.baseUrl}/${id}`);
+    
     if (!response.ok) {
-      throw new Error('Export failed');
+      throw new Error(`Failed to get tool: ${response.statusText}`);
     }
-
-    return response.blob();
-  }
-
-  async importTool(file: File): Promise<Tool> {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const response = await fetch(`${this.baseUrl}/tools/import`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('synapseai_token')}`,
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || 'Import failed');
-    }
-
+    
     return response.json();
   }
 
-  async getToolCategories(): Promise<string[]> {
-    return this.request('/tools/categories');
-  }
-
-  async bulkDelete(ids: string[]): Promise<void> {
-    await this.request('/tools/bulk-delete', {
-      method: 'POST',
-      body: JSON.stringify({ ids }),
+  async updateTool(id: string, updates: Partial<Tool>): Promise<Tool> {
+    const response = await fetch(`${this.baseUrl}/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
     });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to update tool: ${response.statusText}`);
+    }
+    
+    return response.json();
   }
 
-  async bulkUpdateStatus(ids: string[], status: string): Promise<void> {
-    await this.request('/tools/bulk-update-status', {
-      method: 'POST',
-      body: JSON.stringify({ ids, status }),
+  async deleteTool(id: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/${id}`, {
+      method: 'DELETE'
     });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to delete tool: ${response.statusText}`);
+    }
   }
 
-  async getToolExecutionHistory(id: string, params?: {
-    page?: number;
-    limit?: number;
-  }): Promise<{
-    executions: Array<{
-      id: string;
-      executedAt: Date;
-      input: any;
-      output: any;
-      success: boolean;
-      executionTime: number;
-      error?: string;
-    }>;
-    total: number;
-  }> {
-    const searchParams = new URLSearchParams();
-    if (params?.page) searchParams.set('page', params.page.toString());
-    if (params?.limit) searchParams.set('limit', params.limit.toString());
+  async listTools(organizationId: string, filters?: any): Promise<Tool[]> {
+    const params = new URLSearchParams({
+      organizationId,
+      ...filters
+    });
+    
+    const response = await fetch(`${this.baseUrl}?${params}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to list tools: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
 
-    return this.request(`/tools/${id}/executions?${searchParams.toString()}`);
+  // Tool Execution
+  async executeTool(
+    toolId: string, 
+    input: any, 
+    context: ToolExecutionContext
+  ): Promise<ToolExecution> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input, context })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to execute tool: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async getExecution(executionId: string): Promise<ToolExecution> {
+    const response = await fetch(`${this.baseUrl}/executions/${executionId}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get execution: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async getExecutionHistory(toolId: string, limit: number = 50): Promise<ToolExecution[]> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/executions?limit=${limit}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get execution history: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  // Tool Testing
+  async testTool(toolId: string, input: any): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to test tool: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async validateSchema(toolId: string, input: any): Promise<{ valid: boolean; errors?: string[] }> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to validate schema: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  // Tool Categories & Templates
+  async getCategories(): Promise<string[]> {
+    const response = await fetch(`${this.baseUrl}/categories`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get categories: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async getTemplates(category?: string): Promise<any[]> {
+    const params = category ? `?category=${category}` : '';
+    const response = await fetch(`${this.baseUrl}/templates${params}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get templates: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async createFromTemplate(templateId: string, config: any): Promise<Tool> {
+    const response = await fetch(`${this.baseUrl}/templates/${templateId}/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to create tool from template: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  // Tool Analytics
+  async getUsageStats(toolId: string, period: string = '7d'): Promise<ToolUsage> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/usage?period=${period}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get usage stats: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async getAnalytics(toolId: string, period: string = '7d'): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/analytics?period=${period}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get analytics: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  // Tool Sharing & Permissions
+  async shareTool(toolId: string, permissions: any): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(permissions)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to share tool: ${response.statusText}`);
+    }
+  }
+
+  async getSharedTools(organizationId: string): Promise<Tool[]> {
+    const response = await fetch(`${this.baseUrl}/shared?organizationId=${organizationId}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get shared tools: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  // Tool Import/Export
+  async exportTool(toolId: string): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/export`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to export tool: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async importTool(toolData: any): Promise<Tool> {
+    const response = await fetch(`${this.baseUrl}/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(toolData)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to import tool: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async importFromOpenAPI(openApiSpec: any, config?: any): Promise<Tool[]> {
+    const response = await fetch(`${this.baseUrl}/import/openapi`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spec: openApiSpec, config })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to import from OpenAPI: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async importFromPostman(postmanCollection: any, config?: any): Promise<Tool[]> {
+    const response = await fetch(`${this.baseUrl}/import/postman`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ collection: postmanCollection, config })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to import from Postman: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  // Tool Version Management
+  async createVersion(toolId: string, changelog: string): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/versions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ changelog })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to create version: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async getVersions(toolId: string): Promise<any[]> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/versions`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get versions: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async rollbackToVersion(toolId: string, versionId: string): Promise<Tool> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/versions/${versionId}/rollback`, {
+      method: 'POST'
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to rollback to version: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  // Tool Authentication Management
+  async updateAuthentication(toolId: string, auth: any): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/auth`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(auth)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to update authentication: ${response.statusText}`);
+    }
+  }
+
+  async testAuthentication(toolId: string): Promise<{ valid: boolean; error?: string }> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/auth/test`, {
+      method: 'POST'
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to test authentication: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  // Tool Monitoring
+  async getHealthStatus(toolId: string): Promise<{ status: string; lastCheck: Date; details?: any }> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/health`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get health status: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async getErrorLogs(toolId: string, limit: number = 50): Promise<any[]> {
+    const response = await fetch(`${this.baseUrl}/${toolId}/errors?limit=${limit}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get error logs: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  // Batch Operations
+  async batchExecute(executions: Array<{ toolId: string; input: any; context: ToolExecutionContext }>): Promise<ToolExecution[]> {
+    const response = await fetch(`${this.baseUrl}/batch/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ executions })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to batch execute: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+
+  async batchUpdate(updates: Array<{ id: string; updates: Partial<Tool> }>): Promise<Tool[]> {
+    const response = await fetch(`${this.baseUrl}/batch/update`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updates })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to batch update: ${response.statusText}`);
+    }
+    
+    return response.json();
   }
 }
-
-export const toolService = new ToolService();
